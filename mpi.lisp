@@ -529,8 +529,9 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
 	 (mpi-type (typespec-mpi-type base-typespec))
 	 (count (obj-tspec-count metadata)))
     (assert (and metadata base-typespec meta-id))
-  
     (tracep *trace1* t "Send1: lisp-type=~a, count=~a, base-type=~a ~%" (obj-tspec-type metadata)  count base-typespec)
+    ;; This function will only handle strings, simple arrays, and base objects!
+    (assert (or (= meta-id +string+) (= meta-id +simple-array+)(= meta-id +base-object+)))
     (when (= +string+ meta-id)
       (cffi:with-foreign-string (cs data)
 	(mpi-send-1 cs count :MPI_CHAR  destination :tag tag :comm comm :mode mode)))
@@ -1110,7 +1111,8 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
     (assert data) ; data needs to be the same type and count at all procs. Can't pass in nil!
     (tracep *trace1* t "Reduce: lisp-type=~a, count=~a, base-type=~a ~%" (obj-tspec-type metadata)  count base-typespec)
     (assert (/= +string+ meta-id))
-
+    ;; This function will only handle simple arrays of base objects!
+    (assert (find (typespec-lisp-type base-typespec) '(single-float double-float fixnum)))
     (cffi:with-foreign-objects ((sendbuf (typespec-cffi-type base-typespec) (obj-tspec-count metadata))
 				(recvbuf (typespec-cffi-type base-typespec) (obj-tspec-count metadata)))
       (cond ((= +simple-array+ meta-id)

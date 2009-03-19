@@ -1,3 +1,4 @@
+
 (in-package #:mpi)
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;
@@ -53,7 +54,36 @@
 		   (testassert (= (* i i) (read-from-string result)))
 		   )))
 	  (t ; slaves
-	   (slave-server-1-shot)))))
+	   (slave-server-1-shot))))
+
+  (with-test-harness (:title "Test blocking spawn 2")
+    (cond ((= 0 (mpi-comm-rank))
+	   (loop for i from 1 below (mpi-comm-size) do
+		 (spawn-1-shot-evaluation `(* ,(coerce i 'single-float) ,(coerce i 'single-float)) i))
+	   ;; collect results ; note that mpi-receive-string blocks, so it means that the loop can't complete until
+	   ;; all results have been computed.
+	   (loop for i from 1 below (mpi-comm-size) do
+		 (let ((result (mpi-receive-string i)))
+		   (formatp t "Result from ~a: ~a~%" i result)
+		   (testassert (= (coerce (* i i)'single-float) (read-from-string result)))
+		   )))
+	  (t ; slaves
+	   (slave-server-1-shot))))
+
+  (with-test-harness (:title "Test blocking spawn 3")
+    (cond ((= 0 (mpi-comm-rank))
+	   (loop for i from 1 below (mpi-comm-size) do
+		 (spawn-1-shot-evaluation `(* ,(coerce i 'double-float) ,(coerce i 'double-float)) i))
+	   ;; collect results ; note that mpi-receive-string blocks, so it means that the loop can't complete until
+	   ;; all results have been computed.
+	   (loop for i from 1 below (mpi-comm-size) do
+		 (let ((result (mpi-receive-string i)))
+		   (formatp t "Result from ~a: ~a~%" i result)
+		   (testassert (= (coerce (* i i)'double-float) (read-from-string result)))
+		   )))
+	  (t ; slaves
+	   (slave-server-1-shot))))
+  )
 
 (defun test-blocking-spawn2 ()
   (with-test-harness (:title "Test blocking spawn 2")
@@ -79,15 +109,27 @@
 
 (defun test-par-eval1 ()
   (with-test-harness (:title "test par-eval")
-      (cond ((= 0 (mpi-comm-rank))
-	     (let ((result (par-eval (loop for i from 0 below (* 3 (mpi-comm-size)) collect
-					   `(* ,i ,i))))
-		   (expected-result  (loop for i from 0 below (* 3 (mpi-comm-size)) collect
-					   (* i i))))
-	       (testassert (equalp (coerce result 'list) expected-result)))
-	     (kill-slaves))
-	    (t
-	     (slave-server)))))
+    (cond ((= 0 (mpi-comm-rank))
+	   (let ((result (par-eval (loop for i from 0 below (* 3 (mpi-comm-size)) collect
+					 `(* ,i ,i))))
+		 (expected-result  (loop for i from 0 below (* 3 (mpi-comm-size)) collect
+					 (* i i))))
+	     (testassert (equalp (coerce result 'list) expected-result)))
+	   (kill-slaves))
+	  (t
+	   (slave-server))))
+  
+  (with-test-harness (:title "test par-eval 2")
+    (cond ((= 0 (mpi-comm-rank))
+	   (let ((result (par-eval (loop for i from 0 below (- (mpi-comm-size) 1) collect
+					 `(* ,i ,i))))
+		 (expected-result  (loop for i from 0 below (- (mpi-comm-size) 1) collect
+					 (* i i))))
+	     (testassert (equalp (coerce result 'list) expected-result)))
+	   (kill-slaves))
+	  (t
+	   (slave-server))))
+  )
 
 (defun my-next-neighbor ()
   "gives next neighbor (toroidal)"
@@ -118,20 +160,24 @@
 		 (mpi-send data i)))
 	  (t ; (/= root (mpi-comm-rank))
 	   ;;(let ((received (mpi-receive root (type-of data) (if (arrayp data) (length data) 1))))
+	   (formatp t "expecting to receive object of type ~a" (type-of data))
 	   (let ((received (mpi-receive1 root (type-of data))));; (if (arrayp data) (length data) 1))))
 	     (formatp t "received  ~a~%" received)
 	     (testassert (equalp received data)))))))
 
 (defun test-send-receive-types ()
-  "Test whether I can send messages between processors"
+  "Test whether I can send messages between processors regular"
   ;; blocking send/receive
-  (dolist (mode '(:basic)); :synchronous :buffered))
+  (dolist (mode '(:basic :synchronous :buffered))
     (declare (ignore mode)) ;;XXX TEMP!
     (let ((*print-pretty* nil)
 	  (objects-to-send `(0 -127  ;char
 			     128 255 ;unsigned char
 			     256 1.1f0 2.2d0
-			     ,(make-array 3 :element-type '(signed-byte 8) :initial-contents '(1 2 3))
+			     ,(make-array 3 :element-type 'fixnum :initial-contents '(-1 -2 -3))
+			     ,(make-array 3 :element-type '(unsigned-byte 8) :initial-contents '(1 2 3))
+			     ,(make-array 3 :element-type 'single-float :initial-contents '(1.1 2.2 3.3))
+			     ,(make-array 3 :element-type 'double-float :initial-contents '(1.1d0 2.2d0 3.3d0)) 
 			     )))
       (loop for obj in objects-to-send do
 	    (test-send-and-receive obj)))))
@@ -169,11 +215,12 @@
 
 (defun test-wait-any2 ()
   "nonblocking receive, processed with wait-any2"
-  (with-test-harness (:title "test-wait-any")
+  (with-test-harness (:title "Test wait-any")
     (cond ((= 0 (mpi-comm-rank)) ;nonblocking receive a bunch of messages
 	   (let ((*print-pretty* nil)
 		 (requests (loop for r from 1 below (mpi-comm-size) collect
 				 (mpi-receive-string-nonblocking r :tag 1000))))
+	     ;;(print requests)
 	     (loop while requests do
 		   (multiple-value-bind (completed-request status remaining-requests)
 		     (mpi-wait-any2 requests)
@@ -188,7 +235,7 @@
 	   (mpi-send-string *test-msg1* 0 :tag 1000 :blocking t :mode  :basic)))))
 
 (defun test-test-any-with-delay (delay)
-  (with-test-harness (:title "test-test-any. loop until some message arrives")
+  (with-test-harness (:title "test-test-any.some message arrives or not because of delay?")
     (cond ((= 0 (mpi-comm-rank))
 	   (let ((requests (loop for r from 1 below (mpi-comm-size) collect
 				 (mpi-receive-string-nonblocking r :tag 1000))))
@@ -214,7 +261,7 @@
 		  (formatp t "received ~a, ~a~%" flag status)
 		  (return))))))
 	  (t
-	   (sleep 0.5)
+	   (sleep (+ (coerce (mpi-comm-rank) 'float)(random 0.5)))
 	   (mpi-send-string *test-msg1* 0 :tag 1000 :blocking t :mode :basic)))
     (testassert t))) ;XXX obligatory
 
@@ -230,7 +277,7 @@
 		       (formatp t "received ~a  ~a~%" flag status)
 		       (setf requests (rest requests)))))))
 	  (t
-	   (sleep 0.5)
+	   (sleep (+ (coerce (mpi-comm-rank) 'float)(random 0.5)))
 	   (mpi-send-string *test-msg1* 0 :tag 1000 :blocking t :mode :basic)))
     (testassert t))) ;XXX obligatory
 
@@ -243,6 +290,7 @@
 	   (let ((*print-pretty* nil)
 		 (requests (loop for r from 1 below (mpi-comm-size) collect
 				 (mpi-receive-string-nonblocking r :tag 1000))))
+	     (print requests)
 	     (loop while requests do
 		   (multiple-value-bind (completed-requests remaining-requests)
 		       (case mode 
@@ -261,11 +309,10 @@
 	   (sleep (random 0.5))
 	   (mpi-send-string *test-msg1* 0 :tag 1000 :blocking t :mode  :basic)))))
 
-(defun test-nonblocking-probe ()
+(defun test-nonblocking-probe (delay)
   (with-test-harness (:title "test-nonblocking-probe")
     (cond ((= 0 (mpi-comm-rank))
-	   (when (= 1 (mpi-comm-rank))
-	     (sleep 0.5))
+	     (sleep delay)
 	   (loop for r from 1 below (mpi-comm-size) do
 		 (mpi-send-string *test-msg1* r :tag 1000 :blocking nil :mode :basic)))
 	  (t
@@ -281,7 +328,7 @@
   " * a 'test' call is actually a completion, can't call test/wait again if a call completes!"
   (with-test-harness (:title "test-non-blocking-receive")
     (cond ((= 0 (mpi-comm-rank))
-	   (sleep 0.100000) ;;XXX VERY IMPORTANT????
+	   (sleep 0.10000) ;;XXX VERY IMPORTANT????
 	   (let ((sent (loop for r from 1 below (mpi-comm-size) collect
 			     (mpi-send-string *test-msg1* r :tag 1000 :blocking nil :mode :synchronous))))
 	     (loop for req in sent do (mpi-wait req))))
@@ -351,6 +398,10 @@
   (with-test-harness (:title "test-broadcast")
     (let ((r (mpi-broadcast 3145)))
       (formatp t "Bcast received ~a~%" r))
+    (let ((r (mpi-broadcast 3.14)))
+      (formatp t "Bcast received ~a~%" r))
+    (let ((r (mpi-broadcast 3.14d0)))
+      (formatp t "Bcast received ~a~%" r))
     (let ((r (mpi-broadcast (make-array 3 :element-type '(unsigned-byte 32) :initial-contents '(1 2 3)))))
       (formatp t "Bcast received ~a~%" r))
     (let ((r (mpi-broadcast "abcde")))
@@ -380,13 +431,13 @@
 	  (sent-object nil)) ; the message which is sent by the root
       (when (= root (mpi-comm-rank))
 	(setf sent-object object))
-      (setf received-object (mpi-broadcast-auto sent-object ))
+      (setf received-object (mpi-broadcast-auto sent-object )) ;;check 1
       (formatp t "Received broadcast object = ~a~%" received-object)(force-output t)
       (mpi-barrier)(force-output t)
 
       ;; now, reflect the messages back to the root compare, and verify that the round trip succeeded
       (cond ((/= root (mpi-comm-rank))
-	     (mpi-send-auto received-object root))
+	     (mpi-send-auto received-object root));;check 2
 	    (t ; (mpi-comm-rank) = root proc
 	     (loop for s from 0 below (mpi-comm-size) do
 		   (when (/= s root)
@@ -410,11 +461,11 @@
 	  (sent-object nil)) ; the message that this processor sent
       (cond ((/= root (mpi-comm-rank)) ;;send msg to proc 0
 	     (setf sent-object object)
-	     (mpi-send-auto sent-object 0))
+	     (mpi-send-auto sent-object 0)) ;;1,2,3,3-1,3-2 in mpi-send-auto
 	    (t ; (mpi-comm-rank) is root
 	     (loop for source from 1 below (mpi-comm-size) do
 		   ;; receive and print message from each processor
-		   (let ((recvd (mpi-receive-auto  source)))
+		   (let ((recvd (mpi-receive-auto  source))) ;;1,2,3,3-1,3-2 in mpi-receive-auto
 		     (format t "~a~%" recvd)
 		     (format t "Received type=~a~%" (type-of recvd))
 		     (setf (aref received-objects source) recvd)))))
@@ -432,50 +483,70 @@
 		 (formatp t "length of sent=~a, length of received=~a" (length sent-object) (length reflected-object))
 		 )))))))
 
+(defparameter *name* #("T" "unsigned int" "int" "single float" "double float" "character" "string" "simple array" "simple array double-float" "fraction"  "list" "struct"))
+
+(defparameter *function* #(T
+			   (mpi-comm-rank)
+			   (* -1 (mpi-comm-rank)) 
+			   (+ (mpi-comm-rank) 0.0) 
+			   (+ (mpi-comm-rank) 0.0d0)
+			   ;;#\a <== fail! but next is OK
+			   (coerce (format nil "~a" (mpi-comm-rank)) 'character)
+			   (format nil "Greetings from process ~a!" (mpi-comm-rank))
+			   (make-array 4 :element-type 'fixnum :initial-contents (loop for i from 0 below 4 collect (* i (mpi-comm-rank))))
+			   (make-array 4 :element-type 'double-float :initial-contents (loop for i from 0 below 4 collect (+ 0.0d0(* i (mpi-comm-rank)))))
+			   (/ (mpi-comm-rank)  (+ 1 (mpi-comm-rank)))
+			   
+			   (list 'a 1 1/2 1d0 "a" (make-bogostruct :a (* 10 (mpi-comm-rank)) :b#\c))
+			   (make-bogostruct :a 30 :b #\C) )) 
+(defparameter *func-num* 10)
 
 (defun test-send-auto ()
   (trace match-type)
   (trace mpi-receive-string)
-
-  (test-send-auto-object (mpi-comm-rank) "test send-auto a small number (the proc rank)")
-  (test-send-auto-object (format nil "Greetings from process ~a!" (mpi-comm-rank)) "test send-auto string")
-  (test-send-auto-object (make-array 4 :element-type 'fixnum :initial-contents 
-				     (loop for i from 0 below 4 collect (* i (mpi-comm-rank))))
-			 "test-send-auto a fixnum array")
-  (test-send-auto-object (make-array 4 :element-type 'double-float :initial-contents (loop for i from 0 below 4 collect (coerce (sqrt (* i (mpi-comm-rank))) 'double-float)))
-			 "test-send-auto a double-float array")
-  (test-send-auto-object (list 'a 'b 'c 'd) "test send-auto a list") ;??? XXX why does this fail?
-  (test-send-auto-object (list 1 2 3 4) "test send-auto a list")
-  (test-send-auto-object (list "a" "b" "c" "d") "test send-auto a list") ; fails because case is not preserved
-  (test-send-auto-object (make-bogostruct :a 30 :b #\C) "test send-auto a struct")
+  (loop for a from 0 below *func-num* do
+	(test-send-auto-object (aref *function* a)(format nil "Test send auto a ~a" (aref *name* a))))		    
   )			
 
 
 (defun test-broadcast-auto ()
-  (test-broadcast-auto-object 12345 "test broadcast-auto a small number")
-  (test-broadcast-auto-object "Greetings!"  "test broadcast-auto string")
-  (test-broadcast-auto-object (make-array 4 :element-type 'fixnum :initial-contents 
-				     (loop for i from 0 below 4 collect i))
-			      "test-broadcast-auto a fixnum array")
-  (test-broadcast-auto-object (make-array 4 :element-type 'double-float :initial-contents (loop for i from 0 below 4 collect (coerce (sqrt i) 'double-float)))
-			      "test-broadcast-auto a double-float array")
-  (test-broadcast-auto-object (list 'a 'b 'c 'd) "test broadcast-auto a list") 
-  (test-broadcast-auto-object (list 1 2 3 4) "test broadcast-auto a list")
-  (test-broadcast-auto-object (list "a" "b" "c" "d") "test broadcast-auto a list") 
-  (test-broadcast-auto-object (make-bogostruct :a 30 :b #\C) "test broadcast-auto a struct")
+  (loop for a from 0 below *func-num* do
+	(test-broadcast-auto-object (aref *function* a)(format nil "Test broadcast auto a ~a" (aref *name* a))))	
   )			
 
 (defun test-mpi-reduce (&key(root 0)(allreduce nil))
   ;; at each processor, let data be (rank*10, rank*10+1,...rank*10+9
   (let ((data (make-array 10 :element-type 'fixnum :initial-contents
-			  (loop for i from 0 below 10 collect (+ i (* (mpi-comm-rank) 10) )))))
+			  (loop for i from 0 below 10 collect (+ i (* (mpi-comm-rank) 10) ))))
+	(data3 (make-array 10  :initial-contents
+			   (loop for i from 0 below 10 collect (* (mpi-comm-rank)(sqrt (* -1 i))))))
+	(data2 (make-array 10 :element-type 'double-float :initial-contents
+			   (loop for i from 0 below 10 collect (+ i (* (mpi-comm-rank) 10d0) ))))
+
+	(data4 (make-array 10 :element-type 'single-float :initial-contents
+			   (loop for i from 0 below 10 collect (+ i (* (mpi-comm-rank) 10.0) )))))
+    
     
     (with-test-harness (:title (format nil "test reduce MPI_MAX, allreduce=~a" allreduce))
       (let ((r (mpi-reduce data :MPI_MAX :allreduce allreduce)))
 	(formatp t "r = ~a~%" r)(force-output t)
 	(when (or allreduce (= root (mpi-comm-rank)))
 	  (loop for i from 0 below 10 do
-		(testassert (= (aref r i) (+ i (* (1- (mpi-comm-size)) 10))))))))
+		(testassert (equal (aref r i) (+ i (*(- (mpi-comm-size) 1) 10))))))))
+
+    (with-test-harness (:title (format nil "test reduce MPI_MAX_SINGLE_FLOAT, allreduce=~a" allreduce))
+      (let ((r (mpi-reduce data4 :MPI_MAX :allreduce allreduce)))
+	(formatp t "r = ~a~%" r)(force-output t)
+	(when (or allreduce (= root (mpi-comm-rank)))
+	  (loop for i from 0 below 10 do
+		(testassert (= (aref r i) (+ i (*(- (mpi-comm-size) 1) 10.0))))))))
+
+    (with-test-harness (:title (format nil "test reduce MPI_MAX_DOUBLE_FLOAT, allreduce=~a" allreduce))
+      (let ((r (mpi-reduce data2 :MPI_MAX :allreduce allreduce)))
+	(formatp t "r = ~a~%" r)(force-output t)
+	(when (or allreduce (= root (mpi-comm-rank)))
+	  (loop for i from 0 below 10 do
+		(testassert (= (aref r i) (+ i (*(- (mpi-comm-size) 1) 10d0))))))))
 
     (with-test-harness (:title (format nil "test reduce MPI_MIN, allreduce=~a" allreduce))    
       (let ((r (mpi-reduce data :MPI_MIN :allreduce allreduce)))
@@ -492,21 +563,60 @@
 		(testassert (= (aref r i)
 			       (loop for p from 0 below (mpi-comm-size) summing (+ i (* p 10))))))
 	  )))
-    ))
+
+
+    (with-test-harness (:title (format nil "test reduce MPI_SUM_REAL, allreduce=~a" allreduce))        
+      (let ((r (mpi-reduce data2 :MPI_SUM :allreduce allreduce)))
+	(formatp t "r = ~a~%" r)(force-output t)
+	(when (or allreduce (= root (mpi-comm-rank)))
+	  (loop for i from 0 below 10 do
+		(testassert (= (aref r i)
+			       (loop for p from 0 below (mpi-comm-size) summing (+ i (* p 10d0))))))
+	  )))
+    (with-test-harness (:title (format nil "test reduce MPI_PROD, allreduce=~a" allreduce))        
+      (let ((r (mpi-reduce data :MPI_PROD :allreduce allreduce)))
+	(formatp t "r = ~a~%" r)(force-output t)
+	(when (or allreduce (= root (mpi-comm-rank)))
+	  (loop for i from 0 below 10 do
+		(let ((s 1)) 
+		  (loop for p from 0 below (mpi-comm-size) do (setf s (* s (+ i (* p 10)))))
+		  (testassert (= (aref r i) s)))
+	  )))
+    )))
 
 (defun test-mpi-scatter ()
-  (with-test-harness (:title "test-mpi-scatter")
+  (with-test-harness (:title "Test mpi-scatter with fixnum")
     (let ((data (make-array (* (mpi-comm-size) 3) :element-type 'fixnum :initial-contents 
-			    (loop for i from 0 below (* (mpi-comm-size) 3) collect i))))
+			    (loop for i from 0 below (* (mpi-comm-size) 3) collect  i))))
       (let ((r (mpi-scatter data)))
 	(formatp t "r=~a" r)
-	(testassert (equalp r (make-array 3 :element-type 'fixnum :initial-contents
-					  (loop for i from 0 below 3 collect (+ i (* 3 (mpi-comm-rank)))))))
+	(testassert (equalp r (make-array 3  :element-type 'fixnum :initial-contents
+					  (loop for i from 0 below 3 collect  (+ i (* 3 (mpi-comm-rank))))))
 	))))
+  (with-test-harness (:title "Test mpi-scatter with float")
+    (let ((data (make-array (* (mpi-comm-size) 3)  :element-type 'single-float  :initial-contents 
+			    (loop for i from 0 below (* (mpi-comm-size) 3) collect (coerce i 'single-float)))))
+      (let ((r (mpi-scatter data)))
+	(formatp t "r=~a" r)
+	(testassert (equalp r (make-array 3   :element-type 'single-float :initial-contents
+					  (loop for i from 0 below 3 collect (coerce (+ i (* 3 (mpi-comm-rank))) 'single-float))))
+	))))
+
+;;fail!!
+;; XXX REASON: we don't support characters as a standard base type
+#+nil(with-test-harness (:title "Test mpi-scatter with character")
+    (let ((data (make-array (* (mpi-comm-size) 3)  :element-type 'standard-char  :initial-contents 
+			    (loop for i from 0 below (* (mpi-comm-size) 3) collect (aref (format nil "~a" i) 0)))))
+      (let ((r (mpi-scatter data)))
+	(formatp t "r=~a" r)
+	(testassert (equalp r (make-array 3   :element-type 'standard-char :initial-contents
+					  (loop for i from 0 below 3 collect (aref (format nil "~a" (+ i (* 3 (mpi-comm-rank)))) 0))))
+		    ))))
+  )
 
 
 (defun test-mpi-gather (&key(all nil)(root 0))
-  (with-test-harness (:title (if all "test-mpi-allgather" "test-mpi-gather"))
+  (with-test-harness (:title (if all "test-mpi-allgather with fixnum" "test-mpi-gather with fixnum"))
     (let ((data (make-array 3 :element-type 'fixnum :initial-contents 
 			    (loop for i from 0 below 3 collect (+ i (* 3 (mpi-comm-rank)))))))
       (formatp t "data=~a" data)
@@ -519,7 +629,56 @@
 	    (testassert (equalp r (make-array (* 3 (mpi-comm-size)) :element-type 'fixnum :initial-contents
 					      (loop for i from 0 below (* 3 (mpi-comm-size))
 						    collect i)))))
-	))))
+	)))
+(with-test-harness (:title (if all "test-mpi-allgather with float" "test-mpi-gather with float"))
+    (let ((data (make-array 3 :element-type 'single-float :initial-contents 
+			    (loop for i from 0 below 3 collect (coerce (+ i (* 3 (mpi-comm-rank))) 'single-float)))))
+      (formatp t "data=~a" data)
+      (let ((r (if all 
+		   (mpi-allgather data)
+		   (mpi-gather data))))
+	(formatp t "r=~a" r)
+	(if (or (= root (mpi-comm-rank))
+		all)
+	    (testassert (equalp r (make-array (* 3 (mpi-comm-size)) :element-type 'single-float :initial-contents
+					      (loop for i from 0 below (* 3 (mpi-comm-size))
+						    collect (coerce i 'single-float))))))
+	)))
+
+;;fail!!
+;; because we don't support characters as base type
+#+nil(with-test-harness (:title (if all "test-mpi-allgather with char" "test-mpi-gather with char"))
+    (let ((data (make-array 3 :element-type 'standard-char :initial-contents 
+			    (loop for i from 0 below 3 collect (aref (format nil "~a"(+ i (* 3 (mpi-comm-rank)))) 0)))))
+      (formatp t "data=~a" data)
+      (let ((r (if all 
+		   (mpi-allgather data)
+		   (mpi-gather data))))
+	(formatp t "r=~a" r)
+	(if (or (= root (mpi-comm-rank))
+		all)
+	    (testassert (equalp r (make-array (* 3 (mpi-comm-size)) :element-type 'single-float :initial-contents
+					      (loop for i from 0 below (* 3 (mpi-comm-size))
+						    collect (aref (format nil "~a"  i) 0))))))
+	)))
+
+;;fail!!
+;; because arrays are not basetypes
+#+nil(with-test-harness (:title (if all "test-mpi-allgather with array" "test-mpi-gather with array"))
+    (let ((data (make-array 3 :element-type 'simple-array :initial-contents 
+			    (loop for i from 0 below 3 collect (loop for j from 0 below 3 collect (coerce (+ i j (* 3 (mpi-comm-rank))) 'single-float)  )))))
+      (formatp t "data=~a" data)
+      (let ((r (if all 
+		   (mpi-allgather data)
+		   (mpi-gather data))))
+	(formatp t "r=~a" r)
+	(if (or (= root (mpi-comm-rank))
+		all)
+	    (testassert (equalp r (make-array (* 3 (mpi-comm-size)) :element-type 'simple-array :initial-contents
+					      (loop for i from 0 below (* 3 (mpi-comm-size))
+						    collect (loop for j from 0 below 3 collect (coerce (+ j i) 'single-float)))))))
+	)))
+)
 
 
 (defun testmpi ()
@@ -546,42 +705,46 @@
    (trace mpi-send-1)
    (trace mpi-receive)
    (trace mpi-send)
+   (trace mpi-probe)
+
+
 
    (test-testassert)
-  (test-blocking-send-receive-simple)
-   (test-send-receive-types)
-  (test-wait-any2)
-  (test-wait/test-some2 :wait)
-  (test-wait/test-some2 :test)
-;;   (test-wait-all) ;; broken on dell 2008/11/3 for some reason..Broken on both SBCL1.0.22 and CMUCL19e TODO
-   (test-test)
-   (test-test-all)
-   (test-test-any-with-delay 0.0)
-   (test-test-any-with-delay 1.0)
-   (test-nonblocking-probe)
-   (test-non-blocking-receive)
-   (test-non-blocking-send)
-   (test-send-receive)
-   (test-broadcast)
-   (test-blocking-spawn)
-   (test-blocking-spawn2)
-   (test-par-eval1)
-
-
-   (test-send-auto)
-   (test-broadcast-auto)
-
-   (test-mpi-reduce)
-   (test-mpi-reduce :allreduce t)
-
-    (test-mpi-scatter)
-    (test-mpi-gather)
-    (test-mpi-gather :all t) ;test mpi-allgather
-    (mpi-barrier)
-    (formatp0 t "*test-failures*=~%~a~%" *test-failures*)
-    (mpi-finalize)
-
-    ))
+   (test-blocking-send-receive-simple) ;;check
+   (test-send-receive-types);; ??error 
+   (test-wait-any2) ;;check
+   (test-wait/test-some2 :wait) ;;check
+   (test-wait/test-some2 :test) ;;check but program is wrong
+   (test-wait-all) ;; broken on dell 2008/11/3 for some reason..Broken on both SBCL1.0.22 and CMUCL19e TODO ;;check maybe ok??
+   (test-test) ;;check
+   (test-test-all) ;;check
+   (test-test-any-with-delay 0.0) ;;check
+   (test-test-any-with-delay 1.0) ;;check
+   (test-nonblocking-probe 0.0) ;;check   
+   (test-nonblocking-probe 1.1) ;;check 
+   (test-non-blocking-receive) ;;check
+   (test-non-blocking-send) ;;check
+   (test-send-receive) ;;check
+   (test-broadcast) ;;check?? enough??
+   (test-blocking-spawn) ;;check
+   (test-blocking-spawn2) ;;check
+   (test-par-eval1) ;;check
+   
+   
+   (test-send-auto) ;;check
+   (test-broadcast-auto) ;;check
+   
+   (test-mpi-reduce) ;;check can't reduce the real-num data set.
+   (test-mpi-reduce :allreduce t) ;;check
+   
+   (test-mpi-scatter) ;;?? can't scatter the array objects and the char objects
+   (test-mpi-gather) ;;?? can't gather the array objects and the char objects  
+   (test-mpi-gather :all t) ;;?? test mpi-allgather
+   (mpi-barrier)
+   (formatp0 t "*test-failures*=~%~a~%" *test-failures*)
+   (mpi-finalize)
+   
+   ))
 
 (defun baz ()
 ;  (test-par-eval1)

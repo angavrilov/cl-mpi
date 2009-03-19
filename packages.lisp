@@ -21,7 +21,7 @@
 	   formatp formatp0 tracep
 
 
-
+	   *trace1* ; toggle this to seee some trace info 
 	   )
   )
 
