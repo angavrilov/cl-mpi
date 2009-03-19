@@ -1,0 +1,156 @@
+README for CL-MPI
+
+Common Lisp Bindings for MPI
+
+Copyright (c) 2008  Alex Fukunaga
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+===================================================
+CONTENTS
+
+1. SUPPORTED PLATFORMS
+2. DEPENDENCIES
+3. INSTALLATION
+4. TESTING
+5. NOTES
+
+
+===================================================
+1. SUPPORTED PLATFORMS
+
+The long-term goal of CL-MPI is to provide a portable Common Lisp
+binding for MPI. I hope that eventually, any Common Lisp
+implementation which supports CFFI can be used with any MPI implementation.
+In the meantime, here are the currently tested configurations:
+
+Tested MPI implementations:
+   - MPICH 1.2.5.3-2  (on Ubuntu Linux 8.04)
+
+Tested Lisp implementations.
+   - Steel Bank Common Lisp (SBCL) 1.0.22,1.0.24
+   - CMU Common Lisp 19e
+
+
+Tested configurations:
+1) MPICH 1.2.5.3-2 on Ubuntu Linux 8.04 with SBCL 1.0.22
+2) MPICH 1.2.5.3-2 on Ubuntu Linux 8.04 with CMUCL 19e
+
+
+===================================================
+2. DEPENDENCIES
+
+   ASDF
+
+   CFFI (C Foreign Function Interface), version 0.10.3 or later
+        Tested with 0.10.3
+
+===================================================
+3. INSTALLATION
+
+a) Install all of the systems which CL-MPI depends on:
+  1) Install a supported MPI implementation (currently only MPICH)
+  2) Install the CFFI library, version 0.10.3 or later.  
+
+------------------------------------------
+
+b) Configure the installation.
+Open cl-mpi-configure.lisp in an editor.
+
+  1) Specify location of MPI header file
+     Modify the following line so that it points to the correct location for the mpi.h header file
+     (defvar *mpi-header-file* "/usr/include/mpi/mpi.h")
+
+  2) Specify MPI shared library location
+     The second form in cl-mpi-configure.lisp configures how the MPI shared library is loaded.
+     For example, the current default is:          
+     (eval-when (:compile-toplevel :load-toplevel :execute)
+        (defun load-mpi-foreign-libraries ()
+           (cffi:use-foreign-library "/usr/lib/mpich-shmem/lib/shared/libmpich-shmem.so") ; this should work for a standard MPICH implementation
+        )
+        (load-mpi-foreign-libraries))
+        (format t "Loaded MPI libraries!~%"))
+
+     Modify the string after cffi:use-foreign-library to point to the MPI shared library (.so file) to load.
+
+
+------------------------------------------
+c) Build CL-MPI
+
+Start Lisp in the directory where the CL-MPI sources reside, and build the CL-MPI system:
+
+CL-USER> (asdf:operate 'asdf:compile-op 'cl-mpi)
+
+===================================================
+4. TESTING
+
+After installation is complete, we can try running the CL-MPI test
+program, which runs many tests to verify that the library works
+correctly.
+
+
+Do NOT use SLIME or the Lisp implementation's native
+REPL to start the test program.  As with all MPI programs, you must
+start the MPI environment (e.g., using the standard "mpirun" command)
+and execute the Lisp program within MPI.
+
+The exact command to run will depend on your Lisp implementation and
+MPI implementation.
+
+  EXAMPLE Commands for running the CL-MPI test suite:
+
+  For SBCL and MPICH:
+
+  Go to the directory where the CL-MPI sources are located, and 
+  at the shell prompt, enter:
+
+    mpirun -np 2 /usr/local/bin/sbcl --load "run-mpi-test.lisp"
+
+
+  The above command starts MPI (with the mpirun executable), using 2
+  processes.  Each process starts SBCL (which, in this example, is
+  located at /usr/local/bin/sbcl), and SBCL is instructed to load (and
+  execute) the test suite (run-mpi-test.lisp).
+  You may or may not have to enter the full path to SBCL, depending on
+  your environment.
+
+  Similarly, for CMUCL and MPICH, run the command:
+     mpirun -np 2 /usr/local/bin/lisp -load "run-mpi-test.lisp"
+
+
+-------------------
+Alternate, Quick build and test instruction
+the included Makefile should work if you are using a
+standard installation of SBCL and MPICH
+try:
+ make test
+This will build and test CL-MPI
+
+------------------
+
+
+
+===================================================
+5. NOTES:
+
+** Unfortunately, CL-MPI can not be installed using
+ASDF-INSTALL because CL-MPI must be provided the location of the mpi.h
+header file, as well as the location of the MPI shared library.
+However, I might be wrong, and any patches to make installation easier
+are welcome!
