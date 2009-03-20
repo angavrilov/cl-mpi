@@ -1,0 +1,12 @@
+
+Here are some example CL-MPI programs:
+
+mpi-hello-world.lisp   -- trivial hello world program
+    make sbcl-test-hello-world (for SBCL users)
+    make cmucl-test-hello-world (for CMUCL users)
+
+trapezoidal-integration.lisp -- paralel, numerical integration
+Try:
+    make sbcl-test-integrate   (for SBCL users)
+    make cmucl-test-integrate  (for CMUCL users)
+

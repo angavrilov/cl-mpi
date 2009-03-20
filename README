@@ -64,6 +64,26 @@ Tested configurations:
 ===================================================
 3. INSTALLATION
 
+
+-------------------
+QUICKSTART 
+The included Makefile should work if you are using a
+standard installation of SBCL and MPICH,
+or a standard installatin of CMUCL and MPICH
+try: 
+   [for SBCL]
+    make test-sbcl
+
+   [for CMU]
+    make test-cmu
+
+If the above make command doesn't result in the CL-MPI test suite
+being executed, then some installation steps may be necessary, so
+continue reading!
+
+------------------
+
+
 a) Install all of the systems which CL-MPI depends on:
   1) Install a supported MPI implementation (currently only MPICH)
   2) Install the CFFI library, version 0.10.3 or later.  
@@ -134,15 +154,6 @@ MPI implementation.
      mpirun -np 2 /usr/local/bin/lisp -load "run-mpi-test.lisp"
 
 
--------------------
-Alternate, Quick build and test instruction
-the included Makefile should work if you are using a
-standard installation of SBCL and MPICH
-try:
- make test
-This will build and test CL-MPI
-
-------------------
 
 
 
@@ -151,6 +162,5 @@ This will build and test CL-MPI
 
 ** Unfortunately, CL-MPI can not be installed using
 ASDF-INSTALL because CL-MPI must be provided the location of the mpi.h
-header file, as well as the location of the MPI shared library.
-However, I might be wrong, and any patches to make installation easier
-are welcome!
+header file, as well as the location of the MPI shared library, and I haven't figured out how to do this so that it works at least most of the time.
+Any patches to make installation easier are welcome!

@@ -1,7 +1,8 @@
 (defpackage #:mpi
   (:documentation "CL-MPI library: Common Lisp bindings for the Message Passing Interface (MPI)")
   (:use #:cl)
-  (:export mpi-init mpi-initialized mpi-abort mpi-finalize
+  (:export load-mpi-foreign-libraries
+	   mpi-init mpi-initialized mpi-abort mpi-finalize
 	   mpi-comm-rank mpi-comm-size
 	   mpi-get-processor-name 
 	   mpi-wtime mpi-wtick
@@ -15,8 +16,7 @@
 
 	   ;; point-to-point communication
 	   mpi-send mpi-receive ;mediuim-level interface, assumes user knows type and size
-	   mpi-send-auto mpi-send-auto ;high-level interface
-
+	   mpi-send-auto mpi-receive-auto ;high-level interface
 
 	   formatp formatp0 tracep
 

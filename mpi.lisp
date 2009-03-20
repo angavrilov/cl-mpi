@@ -37,25 +37,19 @@ Some of the documentation strings are copied or derived from:
 |#
 
 
-(eval-when (:compile-toplevel :load-toplevel :execute)
-  ;;#+cmu(defvar *home-path* (cdr (assoc :home ext:*environment-list*)))
-  ;;#+sbcl(defparameter *home-path* "/home/usr9/afukunag")
-  )
 #+sbcl(require 'asdf)
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
-  ;;(defparameter *proj-path* (concatenate 'string *home-path* "/proj/"))
   #+cmu(progn
          (setf debug:*debug-print-level* 11 ;; default 3
                debug:*debug-print-length* 25) ;; default 5
          (setf ext:*gc-verbose* nil)) ;;shut up the garbage collector
-  ;(asdf:operate 'asdf:load-op 'cffi)
   )
                                                                                                                    
 (eval-when (:compile-toplevel :load-toplevel :execute)
-  ;;(defparameter *home-path* cl-user::*home-path*)
   (setf *features* (remove ':newitem *features*))
   (pushnew :newitem *features*)
+  (load-mpi-foreign-libraries) ; this is defined/customized in cl-mpi-configure.lisp
   (in-package #:mpi)
   )
 (in-package #:mpi)                                                                                                                   
@@ -160,8 +154,8 @@ Some of the documentation strings are copied or derived from:
   "Like format, but attaches 'Proc #' to the output so that it's easier to understand
    where the messages are being generated"
   `(when ,tracevar
-    (formatp ,stream ,(concatenate 'string "[~a :~,4f]: "  format-string) (mpi-comm-rank) (mpi-wtime) ,@rest)))
-
+    (formatp ,stream ,(concatenate 'string "[~a :~,4f]: "  format-string) (mpi-comm-rank) (mpi-wtime) ,@rest)
+    (force-output t)))
 
 (defmacro formatp0 (stream format-string &rest rest)
   "formatp which only outputs for the rank0 node"
@@ -230,7 +224,7 @@ Some of the documentation strings are copied or derived from:
 (defun mpi-finalize()
   "This routines cleans up all MPI state. Once this routine is called, no MPI routine (even MPI-INIT) may be called. The user must ensure that all pending communications involving a process completes before the process calls MPI-FINALIZE.
    [See MPI_FINALIZE docs at http://www.mpi-forum.org/docs/mpi-11-html/node151.html]"
-  (formatp t "Calling MPI_Finalize~%")
+  (tracep *trace1* t "Calling MPI_Finalize~%")
   (call-mpi (MPI_Finalize)))
 
 (defun mpi-abort(&key (comm :MPI_COMM_WORLD)(errcode -1))
@@ -247,6 +241,7 @@ Some of the documentation strings are copied or derived from:
 
 All MPI programs must contain a call to MPI-INIT; this routine must be called before any other MPI routine (apart from MPI-INITIALIZED) is called.
    [See MPI_INIT docs at  http://www.mpi-forum.org/docs/mpi-11-html/node151.html]"
+
   (let* ((command-line-args #+sbcl sb-ext:*posix-argv*
 			    #+cmu ext:*command-line-strings*)
 	 (num-args (length command-line-args)))
@@ -270,9 +265,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
   (cffi:with-foreign-object (namelen :int) ;length of name returned by MPI call
     (cffi:with-foreign-pointer (processor-name +MPI_MAX_PROCESSOR_NAME+)
       (MPI_Get_processor_name processor-name namelen)
-      (format t "namelen=~a, processor-name=~a~%" namelen processor-name)
-      (format t "namelen as lisp =~a ~%" (cffi:mem-aref namelen :int))
-      (force-output t)
+      (tracep *trace1* t "namelen=~a, processor-name=~a, namelen as lisp=~a~%" namelen processor-name (cffi:mem-aref namelen :int))
       ;(cffi:foreign-string-to-lisp processor-name (cffi:mem-aref namelen :int) nil)
       (cffi:foreign-string-to-lisp processor-name :count (cffi:mem-aref namelen :int))
       )))
@@ -428,7 +421,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
 	   (let* ((base-type (second (type-of object)))
 		  (base-typespec (find-typespec base-type)))
 	     (assert base-typespec)
-	     (format t "base-type=~a~%" base-type)(force-output t)
+	     (tracep *trace1* t "base-type=~a~%" base-type)
 	     (make-obj-tspec :type 'simple-array :count (length object) :base-typespec base-typespec)))
 	  ;; generic conversion to READable string for objects which are not basic and not simple-array
 	  (t ;
@@ -588,7 +581,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
     ;; in case we sent an array; on the other hand, if we sent a basic object, 
     ;; the count field contains the # of bytes used by the basic object.
     ;; This means that we'll overallocate the buffer in case of a basic object...
-    (formatp t "mpi-receive1 probed: status=~a~%" status)
+    (tracep *trace1* t "mpi-receive1 probed: status=~a~%" status)
     (mpi-receive source type count :tag tag :comm comm)))
 
 
@@ -674,12 +667,12 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
   (declare (optimize (debug 3)(speed 0)(safety 3)))
   (let ((metadata (match-type data)))
     ;; first, send the type and size as a 2-element array of ints
-    (formatp t "send-auto metadata = ~a~%" metadata)(force-output t)
+    (tracep *trace1* t "send-auto metadata = ~a~%" metadata)
     (cffi:with-foreign-object (array :int 3)
       (setf (cffi:mem-aref array :int 0) (typespec-id (obj-tspec-base-typespec metadata)))
       (setf (cffi:mem-aref array :int 1) (obj-tspec-count metadata))
       (setf (cffi:mem-aref array :int 2) (obj-tspec->id metadata))
-      (format t "send-auto, metadata packed id=~a, count=~a, id=~a~%" (cffi:mem-aref array :int 0)(cffi:mem-aref array :int 1)(cffi:mem-aref array :int 2))
+      (tracep *trace1* t "send-auto, metadata packed id=~a, count=~a, id=~a~%" (cffi:mem-aref array :int 0)(cffi:mem-aref array :int 1)(cffi:mem-aref array :int 2))
       (mpi-send-1 array  3 :MPI_INT destination :tag +metadata-tag+ :mode mode :comm comm))
 
     ;; send the actual payload
@@ -810,8 +803,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
    Returns array of statuses, where status[i] = status of request [i]"
   ;; XXX BROKEN ?? can't seem to allocate foreign object with a variable argument?
   (let* ((num-requests (length requests)))
-    (format t "num-requests = ~a" num-requests)(force-output t)
-    (format t "requests = ~a" requests)(force-output t)
+    (tracep *trace1* t "num-requests = ~a, requests=~a" num-requests requests)
     (cffi:with-foreign-objects ((mpi-statuses 'MPI_Status num-requests)
 				(c-requests :pointer num-requests))
 
@@ -832,8 +824,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
   (let* ((num-requests (length requests))
 	 (num-requests2 (* num-requests 1))
 	 (bogo 1))
-    (format t "num-requests = ~a" num-requests)(force-output t)
-    (format t "requests = ~a" requests)(force-output t)
+    (tracep *trace1* t "num-requests=~a, requests=~a" num-requests requests)
     (cffi:with-foreign-objects (;(mpi-status 'MPI_Status)
 				;(mpi-statuses 'MPI_Status num-requests)
 				;(mpi-statuses 'MPI_Status 1)
@@ -1033,7 +1024,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
     ;; broadcast the type and count of data as a 3-element array
     (cffi:with-foreign-object (metadata-array :int 3)
       (when (= root (mpi-comm-rank))
-	(formatp t "metadata=~a~%" metadata)(force-output t)
+	(tracep *trace1* t "mpi-broadcast-auto: metadata=~a~%" metadata)(force-output t)
 	(setf (cffi:mem-aref metadata-array :int 0 ) (typespec-id (obj-tspec-base-typespec metadata)))
 	(setf (cffi:mem-aref metadata-array :int 1 ) (obj-tspec-count metadata))
 	(setf (cffi:mem-aref metadata-array :int 2 ) (obj-tspec->id metadata)))
@@ -1247,11 +1238,11 @@ e.g., p=4, d=10, n=3, assig
 (defun slave-server-1-shot ()
   "a one-shot slave server"
   (let ((command (mpi-receive-string 0))) ;wait for a request
-    (formatp  t "received command: ~a~%" command)
+    (tracep *trace-pe* t "slave-server-1-shot: received command: ~a~%" command)
     (let ((result (eval (read-from-string command))))
-      (formatp t "computed result ~a" result)
-      (mpi-send-string (write-to-string result) 0)
-      )))
+      (tracep *trace-pe* t "slave-server-1-shot: computed result ~a" result)
+      (mpi-send-string (write-to-string result) 0))))
+      
 
 (defun spawn-1-shot-evaluation (expr id)
   "evaluate expr somewhere"
@@ -1300,8 +1291,6 @@ e.g., p=4, d=10, n=3, assig
 
 (defun run-job-on-proc (job proc-id proc-to-job-map)
   "assign job to processor with id proc-id, spawn the process."
-  #+nil(let ((*print-pretty* nil))
-    (format t "sending job ~a to proc ~a~%" job proc-id))
   (spawn-task (job-expr job) proc-id)
   (setf (job-status job) 'running)
   (setf (job-proc job) proc-id)
