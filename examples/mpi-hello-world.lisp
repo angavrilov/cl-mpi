@@ -1,5 +1,5 @@
+#+sbcl(require 'asdf)
 (eval-when (:compile-toplevel :load-toplevel :execute)
-  #+sbcl (require 'asdf)
   (format t "loading cl-mpi~%")
   (asdf:operate 'asdf:load-op 'cl-mpi))
 

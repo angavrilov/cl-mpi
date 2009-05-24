@@ -1,4 +1,5 @@
 #+sbcl(require 'asdf)
 (asdf:operate 'asdf:load-op 'cl-mpi)
+(asdf:operate 'asdf:load-op 'par-eval)
 #+cmu(ext:quit)
 #+sbcl(sb-ext:quit)

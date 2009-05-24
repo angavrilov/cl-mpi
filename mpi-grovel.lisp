@@ -11,6 +11,7 @@
 
 (constantenum MPI_Datatype
 	      ((:MPI_CHAR "MPI_CHAR"))
+	      ((:MPI_BYTE "MPI_BYTE"))
 	      ((:MPI_UNSIGNED_CHAR "MPI_UNSIGNED_CHAR"))
 	      ((:MPI_SHORT "MPI_SHORT"))
 	      ((:MPI_UNSIGNED_SHORT "MPI_UNSIGNED_SHORT"))
@@ -34,3 +35,29 @@
 	      ((:MPI_BXOR "MPI_BXOR"))
 	      ((:MPI_MINLOC "MPI_MINLOC"))
 	      ((:MPI_MAXLOC "MPI_MAXLOC")))
+(constant (MPI_SUCCESS "MPI_SUCCESS"))
+(constant (MPI_ANY_TAG "MPI_ANY_TAG"))
+(constant (MPI_ANY_SOURCE "MPI_ANY_SOURCE"))
+
+(constant (MPI_MAX_PROCESSOR_NAME "MPI_MAX_PROCESSOR_NAME"))
+
+;; The cencelled field is new in MPI2, not in MPI1.
+;; It seems OK to just ignore this field, since I'm not using it yet in CL-MPI.
+#+(or mpich mpich2)
+(cstruct MPI_Status "MPI_Status"
+	 (count "count" :type :int)
+	 ;;(cancelled "cancelled" :type :int) ;;<-- MPICH1/2 incompatibility ignore this field for now.
+	 (MPI_SOURCE "MPI_SOURCE" :type :int)
+	 (MPI_TAG "MPI_TAG" :type :int)
+	 (MPI_ERROR "MPI_ERROR" :type :int))
+
+
+#+openmpi
+(cstruct MPI_Status "MPI_Status"
+	 (count "_count" :type :int)
+	 (cancelled "_cancelled" :type :int) ;;<-- MPICH1/2 incompatibility ignore this field for now.
+	 (MPI_SOURCE "MPI_SOURCE" :type :int)
+	 (MPI_TAG "MPI_TAG" :type :int)
+	 (MPI_ERROR "MPI_ERROR" :type :int))
+
+

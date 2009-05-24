@@ -4,7 +4,7 @@ CL-MPI
 
 MPI bindings for Common Lisp
 
-Copyright (c) 2008  Alex Fukunaga
+Copyright (c) 2008,2009  Alex Fukunaga
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -54,14 +54,7 @@ Some of the documentation strings are copied or derived from:
   )
 (in-package #:mpi)                                                                                                                   
 
-(defconstant +MPI_ANY_TAG+ -1)
-(defconstant +MPI_ANY_SOURCE+ -2)
-
-(defconstant +MPI_MAX_PROCESSOR_NAME+ 256)
-
-(defparameter *mpi-string-buf-size* 60000 "size of the string buffer that is allocated byt string send/receive functions mpi-send-string mpi-receive-string and mpi-send-receive-string")
-
-
+#+nil
 (cffi:defcstruct MPI_Status
   (count :int)
   (MPI_SOURCE :int)
@@ -145,9 +138,12 @@ Some of the documentation strings are copied or derived from:
   "Like format, but attaches 'Proc #' to the output so that it's easier to understand
    where the messages are being generated"
   ;;(format t "format-string=~a, rest=~a~%" format-string rest)
-  `(format ,stream ,(concatenate 'string "[~a :~,4f]: "  format-string) (mpi-comm-rank) (mpi-wtime) ,@rest))
+  (let ((g-value (gensym)))
+    `(progn (let ((,g-value (format ,stream ,(concatenate 'string "[~a :~,4f]: "  format-string) (mpi-comm-rank) (mpi-wtime) ,@rest)))
+	      (force-output ,stream)
+	      ,g-value))))
 
-
+(defparameter *enable-mpi* t)
 (defparameter *trace1* nil "toggle basic tracing")
 
 (defmacro tracep (tracevar stream format-string &rest rest)
@@ -159,19 +155,23 @@ Some of the documentation strings are copied or derived from:
 
 (defmacro formatp0 (stream format-string &rest rest)
   "formatp which only outputs for the rank0 node"
-  `(when (= 0 (mpi-comm-rank))
-    (format ,stream ,(concatenate 'string "[~a]: "  format-string) (mpi-comm-rank) ,@rest)))
-
+  (let ((g-value (gensym)))
+    `(when (= 0 (mpi-comm-rank))
+       (let ((,g-value (format ,stream ,(concatenate 'string "[~a]: "  format-string) (mpi-comm-rank) ,@rest)))
+	 (force-output ,stream)
+	 ,g-value))))
 
 (defmacro call-mpi (mpi-api-function-call)
   (let ((mpi-fun-name (first mpi-api-function-call))
 	(err (gensym)))
-    `(let ((,err ,mpi-api-function-call))
-      (when (/= 0 ,err)
-	(format t "~a failed with error code ~a" (quote ,mpi-fun-name) ,err)
-;	(when (mpi-initialized) (format t " on rank ~a (~a)" 
-	))))
-
+    `(when *enable-mpi*
+       (let ((,err ,mpi-api-function-call))
+	 ;;(format t "Called MPI function: ~a, err value=~a" (quote ,mpi-fun-name) ,err)
+	 (when (/= 0 ,err)
+	   (formatp t "~a failed with error code ~a" (quote ,mpi-fun-name) ,err)
+	   (break)
+	   ;;(when (mpi-initialized) (format t " on rank ~a (~a)" 
+	   )))))
 
 (defstruct status
   (count 0 :type (signed-byte 32))
@@ -184,14 +184,12 @@ Some of the documentation strings are copied or derived from:
     (call-mpi (MPI_Get_count status mpi-type count))
     (cffi:mem-aref count :int)))
 
-
 (defun MPI_Status->mpi-status (status); status is a CFFI pointe to an MPI_Status object
   "returns a Lisp-space status object, equivalent to the MPI_Status object"
   (make-status :count (mpi-get-count status :MPI_CHAR) ;(cffi:foreign-slot-value status 'MPI_Status 'count)
 	       :source (cffi:foreign-slot-value status 'MPI_Status 'MPI_SOURCE)
 	       :tag (cffi:foreign-slot-value status 'MPI_Status 'MPI_TAG)
 	       :error (cffi:foreign-slot-value status 'MPI_Status 'MPI_ERROR)))
-
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;
@@ -209,10 +207,11 @@ Some of the documentation strings are copied or derived from:
 (defun mpi-comm-rank (&optional(comm :MPI_COMM_WORLD))
   "indicates the number of processes involved in a communicator. For MPI_COMM_WORLD, it indicates the total number of processes available 
   [See MPI_COMM_RANK docs at  http://www.mpi-forum.org/docs/mpi-11-html/node101.html]"
-  (cffi:with-foreign-object (my-id :int)
-    (call-mpi (MPI_comm_rank comm my-id))
-    (cffi:mem-aref my-id :int)))
-
+  (if *enable-mpi*
+      (cffi:with-foreign-object (my-id :int)
+	(call-mpi (MPI_comm_rank comm my-id))
+	(cffi:mem-aref my-id :int))
+      0))
 
 (defun mpi-comm-size ()
   "indicates the number of processes involved in a communicator. For MPI_COMM_WORLD, it indicates the total number of processes available 
@@ -229,7 +228,6 @@ Some of the documentation strings are copied or derived from:
 
 (defun mpi-abort(&key (comm :MPI_COMM_WORLD)(errcode -1))
   "This routine makes a 'best attempt' to abort all tasks in the group of comm. This function does not require that the invoking environment take any action with the error code. However, a Unix or POSIX environment should handle this as a return errorcode from the main program or an abort(errorcode).
-
    [See MPI_ABORT docs at http://www.mpi-forum.org/docs/mpi-11-html/node151.html]"
   (cffi:with-foreign-object (c-errcode :int)
     (setf (cffi:mem-aref c-errcode :int) errcode)
@@ -252,7 +250,9 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
 				 :null-terminated-p t)))
 	(cffi:with-foreign-object (argvp :pointer 1)
 	  (setf (cffi:mem-aref argvp :pointer 0) argv)
-	  (call-mpi (MPI_Init argc argvp)))
+	  (call-mpi (MPI_Init argc argvp))
+	  ;;(call-mpi (MPI_Init (cffi:null-pointer) (cffi:null-pointer)))
+	  )
 	(cffi:foreign-free argv)))))
 
 (defun mpi-get-processor-name ()
@@ -263,7 +263,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
 
    [See MPI_GET_PROCESSOR_NAME docs at  http://www.mpi-forum.org/docs/mpi-11-html/node143.html]"
   (cffi:with-foreign-object (namelen :int) ;length of name returned by MPI call
-    (cffi:with-foreign-pointer (processor-name +MPI_MAX_PROCESSOR_NAME+)
+    (cffi:with-foreign-pointer (processor-name MPI_MAX_PROCESSOR_NAME)
       (MPI_Get_processor_name processor-name namelen)
       (tracep *trace1* t "namelen=~a, processor-name=~a, namelen as lisp=~a~%" namelen processor-name (cffi:mem-aref namelen :int))
       ;(cffi:foreign-string-to-lisp processor-name (cffi:mem-aref namelen :int) nil)
@@ -625,7 +625,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
 	       (:basic (call-mpi (MPI_Isend buf count :MPI_CHAR destination tag comm request)))
 	       (:synchronous (call-mpi (MPI_Issend buf count :MPI_CHAR destination tag comm request)))
 	       (:buffered (call-mpi (MPI_Ibsend buf count :MPI_CHAR destination tag comm request))))
-	     (tracep *trace1* t "mpi-send-string generated request = ~a~%" request)(force-output t)
+	     (tracep *trace1* t "mpi-send-string generated request = ~a~%" request)
 	     (return-from mpi-send-string (make-request :mpi-request request :buf buf)))))))
 
 (defun mpi-receive-string (source &key (tag +default-tag+) (buf-size-bytes *mpi-string-buf-size*))
@@ -636,10 +636,27 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
   (cffi:with-foreign-objects ((status 'MPI_Status))
     (cffi:with-foreign-pointer (buf buf-size-bytes)
 ;	(bogo-mpi-recv buf (cffi:mem-aref c-buf-size-bytes :int) :MPI_CHAR (cffi:mem-aref c-source :int) 
-      (call-mpi (MPI_Recv buf buf-size-bytes :MPI_CHAR source tag :MPI_COMM_WORLD (cffi:mem-aref status 'MPI_Status)))
+;      (call-mpi (MPI_Recv buf buf-size-bytes :MPI_CHAR source tag :MPI_COMM_WORLD (cffi:mem-aref status 'MPI_Status)))
+      (call-mpi (MPI_Recv buf buf-size-bytes :MPI_BYTE source tag :MPI_COMM_WORLD (cffi:mem-aref status 'MPI_Status)))
+
+      (let ((count (cffi:foreign-slot-value status 'MPI_Status 'count)))
+	;;(formatp t "received string len ~a = ~a~%" count (cffi:foreign-string-to-lisp buf count nil))
+	(values (cffi:foreign-string-to-lisp buf :count count) count)))))
+
+(defun mpi-ireceive-string (source &key (tag +default-tag+) (buf-size-bytes *mpi-string-buf-size*))
+  "Blocking receive string.
+   Returns (values string count)
+   INEFFICIENT - shouldn't allocate buffer every time."
+  (declare (type (unsigned-byte 32) source tag))
+  (cffi:with-foreign-objects ((status 'MPI_Status))
+    (cffi:with-foreign-pointer (buf buf-size-bytes)
+      (formatp t "receiving string"); len ~a = ~a~%" count (cffi:foreign-string-to-lisp buf count nil))
+;	(bogo-mpi-recv buf (cffi:mem-aref c-buf-size-bytes :int) :MPI_CHAR (cffi:mem-aref c-source :int) 
+      (call-mpi (MPI_Irecv buf buf-size-bytes :MPI_CHAR source tag :MPI_COMM_WORLD (cffi:mem-aref status 'MPI_Status)))
       (let ((count (cffi:foreign-slot-value status 'MPI_Status 'count)))
 	;(formatp t "received string len ~a = ~a~%" count (cffi:foreign-string-to-lisp buf count nil))
 	(values (cffi:foreign-string-to-lisp buf :count count) count)))))
+
 
 
 (defun mpi-send-receive-string (send-str destination source
@@ -764,7 +781,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
 (defun mpi-wait (request)
   "block until request completes"
   (cffi:with-foreign-object (mpi-status 'MPI_Status)
-    (tracep *trace1* t "request=~a" request)(force-output t)
+    (tracep *trace1* t "request=~a" request)
     (call-mpi (MPI_Wait (request-mpi-request request)  mpi-status))
     (tracep *trace1* t "count=~a,source=~a,tag=~a,err=~a~%" (mpi-get-count mpi-status :MPI_CHAR) 
 	     (cffi:foreign-slot-value mpi-status 'MPI_Status 'MPI_SOURCE)
@@ -775,18 +792,26 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
 
 (defun copy-requests-sequence-to-c-array (num-requests requests c-requests)
   (loop for r from 0 below num-requests do
+	#+mpich2 
+	(setf (cffi:mem-aref c-requests :int r)
+	      (cffi:mem-aref (request-mpi-request (elt requests r)) :int))
+	#-mpich2
 	(setf (cffi:mem-aref c-requests :pointer r)
-	      (cffi:mem-aref (request-mpi-request (elt requests r)) :pointer))))
+	      (cffi:mem-aref (request-mpi-request (elt requests r)) :pointer))
+	))
+
 
 (defun mpi-wait-any (requests)
   "block until one request completes.
    Returns the status for the completed request"
   (let ((num-requests (length requests)))
     (cffi:with-foreign-objects ((mpi-status 'MPI_Status)
-				(completed-index :int)
+				;(completed-index :int)
+				(completed-index :pointer)
 				(c-requests :pointer num-requests))
       (copy-requests-sequence-to-c-array num-requests requests c-requests)
       (call-mpi (MPI_Waitany num-requests c-requests completed-index mpi-status))
+;  (break)
       (values (cffi:mem-aref completed-index :int) (MPI_Status->mpi-status mpi-status)))))
 
 (defun mpi-wait-any2 (requests)
@@ -848,6 +873,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
     (cffi:with-foreign-objects ((mpi-statuses 'MPI_Status num-requests)
 				(flag :int)
 				(c-requests :pointer num-requests))
+
       (copy-requests-sequence-to-c-array num-requests requests c-requests)
       (call-mpi (MPI_Testall num-requests c-requests flag mpi-statuses))
       ;;(formatp t "past MPI_Testall call")
@@ -864,7 +890,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
 				(c-requests :pointer num-requests))
       (copy-requests-sequence-to-c-array num-requests requests c-requests)
       (call-mpi (MPI_Testany num-requests c-requests out-index flag mpi-status))
-      ;;(formatp t "past MPI_Testany call")(force-output t)
+      ;;(formatp t "past MPI_Testany call")
       (values (= 1 (cffi:mem-aref flag :int)) (cffi:mem-aref out-index :int) (MPI_Status->mpi-status mpi-status)))))
 
 (defun mpi-test (request)
@@ -889,7 +915,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
 	(:test
 	 (call-mpi (MPI_Waitsome num-requests c-requests c-outcount c-done-indices mpi-statuses))))
       (let ((num-done (cffi:mem-aref c-outcount :int)))
-	(tracep *trace1* t "num-done=~a~%" num-done)(force-output t)
+	(tracep *trace1* t "num-done=~a~%" num-done)
 	(loop for i from 0 below num-done collect
 	      (cons (cffi:mem-aref c-done-indices :int i) ;nil))))))
 		    (MPI_Status->mpi-status (cffi:mem-aref mpi-statuses 'MPI_Status  i))))))))
@@ -930,7 +956,8 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
   (let ((buf (cffi:foreign-alloc :char :count buf-size-bytes))
 	(request (cffi:foreign-alloc :pointer)))
     (call-mpi (MPI_Irecv buf buf-size-bytes :MPI_CHAR source tag :MPI_COMM_WORLD request))
-    (make-request :mpi-request request :buf buf)))
+;    (make-request :mpi-request request :buf buf)))
+    (make-request :mpi-request request :buf buf :count buf-size-bytes)))
 
 (defun mpi-probe (source tag &key (comm :MPI_COMM_WORLD)(blocking t))
   "Performs a (blocking or nonblocking) test for a message from a given source with given tag. 
@@ -1024,7 +1051,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
     ;; broadcast the type and count of data as a 3-element array
     (cffi:with-foreign-object (metadata-array :int 3)
       (when (= root (mpi-comm-rank))
-	(tracep *trace1* t "mpi-broadcast-auto: metadata=~a~%" metadata)(force-output t)
+	(tracep *trace1* t "mpi-broadcast-auto: metadata=~a~%" metadata)
 	(setf (cffi:mem-aref metadata-array :int 0 ) (typespec-id (obj-tspec-base-typespec metadata)))
 	(setf (cffi:mem-aref metadata-array :int 1 ) (obj-tspec-count metadata))
 	(setf (cffi:mem-aref metadata-array :int 2 ) (obj-tspec->id metadata)))
@@ -1223,137 +1250,5 @@ e.g., p=4, d=10, n=3, assig
 
 
 
-
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;
-;;;  Intermedia-level abstractions
-;;;
-
-(defparameter *trace-pe* nil "toggle tracing for par-eval")
-
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-(defun slave-server-1-shot ()
-  "a one-shot slave server"
-  (let ((command (mpi-receive-string 0))) ;wait for a request
-    (tracep *trace-pe* t "slave-server-1-shot: received command: ~a~%" command)
-    (let ((result (eval (read-from-string command))))
-      (tracep *trace-pe* t "slave-server-1-shot: computed result ~a" result)
-      (mpi-send-string (write-to-string result) 0))))
-      
-
-(defun spawn-1-shot-evaluation (expr id)
-  "evaluate expr somewhere"
-  (mpi-send-string (write-to-string expr) id))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-
-(defstruct smessage
-  "message to a slave-server"
-  (command nil) ;one of: 'eval 'quit
-  (payload nil)) ; if command=='eval, then this it the sexpr to eval
-
-(defun slave-server ()
-  (loop ;repeat ;1 do
-   (let ((msg-from-master (read-from-string (mpi-receive-string 0)))) ;wait for a request
-     (let ((*print-pretty* nil))
-       (tracep *trace-pe* t "received message from master: ~a~%" msg-from-master))
-     (ecase (smessage-command msg-from-master)
-       (eval
-	(let ((result (eval (smessage-payload msg-from-master))))
-	  ;;(formatp t "computed result ~a" result)
-	  (mpi-send-string (write-to-string result) 0)))
-       (quit
-	(return-from slave-server t))))))
-
-(defun spawn-task (expr id)
-  "evaluate expr somewhere"
-   ;; XXX Maybe instead of write-so-string, this should be prin1-to-string??
-  (mpi-send-string (write-to-string (make-smessage :command 'eval :payload expr)) id))
-   
-
-(defun par-eval-seq (expressions)
-  "SINGLE-PROCESSOR VERSION of par-eval FOR DEBUGGING:
-   Evaluate array of expressions #(expr1 expr2 .... exprn) in parallel. 
-   returns array of results#(val1 val2 ... valn)
-   Returns when all of the expressions are finished."
-  (make-array (length expressions) :initial-contents
-	      (loop for exp in expressions collect (eval exp))))
-
-(defstruct job
-  (id nil)
-  (expr nil) ; the s-expression to evaluate on the slave
-  (proc nil) ;the proc to which this job is assigned
-  (status nil))
-
-(defun run-job-on-proc (job proc-id proc-to-job-map)
-  "assign job to processor with id proc-id, spawn the process."
-  (spawn-task (job-expr job) proc-id)
-  (setf (job-status job) 'running)
-  (setf (job-proc job) proc-id)
-  (setf (aref proc-to-job-map proc-id) job))
-
-(defun par-eval (expressions)
-  "Evaluate array of expressions #(expr1 expr2 .... exprn) in parallel. 
-   returns array of results#(val1 val2 ... valn)
-   Returns when all of the expressions are finished.
-   This version does not do any load-balancing.
-   This is not fault tolerant if a slave fails
-   "
-  ;(assert (<= (length expressions) (mpi-comm-size)))
-  (let* ((num-jobs (length expressions))
-	 (results (make-array num-jobs :initial-element nil)); result[i] = result of i'th expression
-	 (proc-to-job-map (make-array num-jobs :initial-element nil)) ; proc-to-job[p] = id of job running on proc p
-	 ;; all jobs are initially pending
-	 (pending-jobs (loop for expr in expressions 
-			     for index = 0 then (1+ index) collect
-			     (make-job :id index :expr expr :status 'pending)))
-	 (running-jobs nil))
-    ;(format t "expressions=~a~%" expressions)
-    ;(format t "~%Generated jobs: ~a~%" pending-jobs)
-
-    ;; assign first N jobs to processors
-    (loop for proc from 1 below (min num-jobs (mpi-comm-size) )
-	  for job = (pop pending-jobs) do
-	  (assert job)
-	  (run-job-on-proc job proc proc-to-job-map)
-	  (push job running-jobs))
-	  
-    (loop while running-jobs do ; while there are jobs which haven't returned results
-	  ;; block until I receive a message from some child
-	  #+nil(when (= 1 (length running-jobs))
-		 (format t "Waiting for job: ~a~%" (first running-jobs)))
-	  (let* ((status (mpi-probe +MPI_ANY_SOURCE+ +MPI_ANY_TAG+ :blocking t) )
-		 (proc (status-source status)))
-	    ;;multiple-value-bind (msg-length proc tag error)
-	    ;; Store the result
-	    (let ((job (aref proc-to-job-map proc))
-		  (result (read-from-string (mpi-receive-string proc))))
-	      (if (not job) (error "null job1!"))
-	      (setf (aref results (job-id job)) result)
-	      (setf (job-status job) 'completed)
-	      (setf running-jobs (remove job running-jobs))
-	      (tracep *trace-pe* t "received result from ~a: ~a~%" proc result)
-
-	      ;; this  processor is now available
-	      ;(assert (= 1 (count proc running-jobs :test #'(lambda (job) (= proc (job-proc job)))))) ; I should be expecting a message fromthis child
-
-	      (when pending-jobs
-		;; assign a new task to the newly freed processor
-		(let ((next-job (pop pending-jobs)))
-		  (run-job-on-proc next-job proc proc-to-job-map)
-		  (push next-job running-jobs)))))
-	  ;;(format t "At end of cycle, running-jobs=~a~%" running-jobs)
-	  )
-    ;; at this point, the master has collected all results from the slaves
-    (tracep *trace-pe* t "collected results: ~a~%" results)
-    results))
-
-(defun kill-slaves ()
-  (loop for i from 1 below (mpi-comm-size) do
-	(mpi-send-string (write-to-string (make-smessage :command 'quit)) i)))
 
 

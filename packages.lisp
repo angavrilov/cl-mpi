@@ -13,15 +13,20 @@
 	   mpi-broadcast-auto ; high-level interface
 	   mpi-reduce mpi-allreduce
 	   mpi-scatter mpi-gather mpi-allgather
+	   mpi-probe
 
 	   ;; point-to-point communication
+	   mpi-send-string mpi-receive-string mpi-send-receive-string
 	   mpi-send mpi-receive ;mediuim-level interface, assumes user knows type and size
 	   mpi-send-auto mpi-receive-auto ;high-level interface
 
 	   formatp formatp0 tracep
 
-
+	   ;;
+	   status status-count status-source status-tag status-error make-status
 	   *trace1* ; toggle this to seee some trace info 
+	   MPI_ANY_SOURCE MPI_ANY_TAG
+	   *enable-mpi* 
 	   )
   )
 
@@ -29,10 +34,6 @@
 #|
 
 These are symbols which will eventually be exported, but I don't think they are ready yet.
-	   mpi-probe
-
-	   mpi-send-string mpi-receive-string mpi-send-receive-string
-
 	   with-buffer
 	   mpi-buffer-attach mpi-buffer-detach ; for point-to-point buffered communication
 
@@ -45,3 +46,6 @@ These are symbols which will eventually be exported, but I don't think they are 
 	   mpi-receive-string-nonblocking 
 
 |#
+
+
+

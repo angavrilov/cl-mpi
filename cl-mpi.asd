@@ -13,12 +13,12 @@
     :depends-on (:cffi :cffi-grovel)
     :components
     ((:file "packages")
-     (:file "cl-mpi-configure")
+     (:file "cl-mpi-configure" :depends-on ("packages"))
      (cffi-grovel:grovel-file "mpi-grovel" :depends-on ("packages" "cl-mpi-configure"))
      ;     (:file "mpi-grovel.grovel-tmp")
      ;     (:file "mpi" :depends-on ("packages" "mpi-grovel.grovel-tmp"))
      (:file "mpi" :depends-on ("packages"))
-     (:file "mpi-test" :depends-on ("mpi"))
+     ;;(:file "mpi-test" :depends-on ("mpi"))
      ))
 
 

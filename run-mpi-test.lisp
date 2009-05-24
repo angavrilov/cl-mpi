@@ -1,5 +1,7 @@
 #+sbcl(require 'asdf)
 (asdf:operate 'asdf:load-op 'cl-mpi)
+(asdf:operate 'asdf:load-op 'par-eval)
+(load "mpi-test")
 (mpi::testmpi)
 #+cmu(ext:quit)
 #+sbcl(sb-ext:quit)
