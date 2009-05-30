@@ -43,7 +43,7 @@
 
 ;; The cencelled field is new in MPI2, not in MPI1.
 ;; It seems OK to just ignore this field, since I'm not using it yet in CL-MPI.
-#+(or mpich mpich2)
+#+(or mpich1 mpich2)
 (cstruct MPI_Status "MPI_Status"
 	 (count "count" :type :int)
 	 ;;(cancelled "cancelled" :type :int) ;;<-- MPICH1/2 incompatibility ignore this field for now.

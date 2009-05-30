@@ -525,8 +525,6 @@ THE SOFTWARE.
 (defparameter *func-num* 10)
 
 (defun test-send-auto ()
-  (trace match-type)
-  (trace mpi-receive-string)
   (loop for a from 0 below *func-num* do
 	(test-send-auto-object (aref *function* a)(format nil "Test send auto a ~a" (aref *name* a))))		    
   )			

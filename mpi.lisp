@@ -24,6 +24,8 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
+
+
 Some of the documentation strings are copied or derived from:
  MPI: A Message-Passing Interface Standard
  Message Passing Interface Forum
@@ -54,12 +56,6 @@ Some of the documentation strings are copied or derived from:
   )
 (in-package #:mpi)                                                                                                                   
 
-#+nil
-(cffi:defcstruct MPI_Status
-  (count :int)
-  (MPI_SOURCE :int)
-  (MPI_TAG :int)
-  (MPI_ERROR :int))
 
 ;; Environmental functions
 (cffi:defcfun ("MPI_Initialized" MPI_Initialized) :int (flag :pointer))
@@ -135,7 +131,8 @@ Some of the documentation strings are copied or derived from:
 
 
 (defmacro formatp (stream format-string &rest rest)
-  "Like format, but attaches 'Proc #' to the output so that it's easier to understand
+  "For debugging CL-MPI.
+   Like format, but attaches 'Proc #' and wtime to the output so that it's easier to understand
    where the messages are being generated"
   ;;(format t "format-string=~a, rest=~a~%" format-string rest)
   (let ((g-value (gensym)))
@@ -147,8 +144,7 @@ Some of the documentation strings are copied or derived from:
 (defparameter *trace1* nil "toggle basic tracing")
 
 (defmacro tracep (tracevar stream format-string &rest rest)
-  "Like format, but attaches 'Proc #' to the output so that it's easier to understand
-   where the messages are being generated"
+  "executes formatp when tracevar is non-nil"
   `(when ,tracevar
     (formatp ,stream ,(concatenate 'string "[~a :~,4f]: "  format-string) (mpi-comm-rank) (mpi-wtime) ,@rest)
     (force-output t)))
@@ -157,9 +153,7 @@ Some of the documentation strings are copied or derived from:
   "formatp which only outputs for the rank0 node"
   (let ((g-value (gensym)))
     `(when (= 0 (mpi-comm-rank))
-       (let ((,g-value (format ,stream ,(concatenate 'string "[~a]: "  format-string) (mpi-comm-rank) ,@rest)))
-	 (force-output ,stream)
-	 ,g-value))))
+       (formatp ,stream ,format-string ,@rest))))
 
 (defmacro call-mpi (mpi-api-function-call)
   (let ((mpi-fun-name (first mpi-api-function-call))
@@ -650,7 +644,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
   (declare (type (unsigned-byte 32) source tag))
   (cffi:with-foreign-objects ((status 'MPI_Status))
     (cffi:with-foreign-pointer (buf buf-size-bytes)
-      (formatp t "receiving string"); len ~a = ~a~%" count (cffi:foreign-string-to-lisp buf count nil))
+      ;;(formatp t "receiving string"); len ~a = ~a~%" count (cffi:foreign-string-to-lisp buf count nil))
 ;	(bogo-mpi-recv buf (cffi:mem-aref c-buf-size-bytes :int) :MPI_CHAR (cffi:mem-aref c-source :int) 
       (call-mpi (MPI_Irecv buf buf-size-bytes :MPI_CHAR source tag :MPI_COMM_WORLD (cffi:mem-aref status 'MPI_Status)))
       (let ((count (cffi:foreign-slot-value status 'MPI_Status 'count)))
