@@ -24,16 +24,28 @@ THE SOFTWARE.
 
 ===================================================
 CONTENTS
-
-1. SUPPORTED PLATFORMS
+0. INTRODUCTION
+1. PLATFORMS
 2. DEPENDENCIES
 3. INSTALLATION
 4. TESTING
 5. NOTES
 
+===================================================
+0. Introduction
+
+CL-MPI is a portable, Common Lisp binding for
+the MPI message passing library.
+CL-MPI enables parallel programming in Common Lisp
+using a message-passing model on either a cluster of machines, or a
+single multicore machine.
+
+CL-MPI can also be used to provide "true" multiprocessing for some
+Common Lisp implementations which don't have native threading
+capabilities.
 
 ===================================================
-1. SUPPORTED PLATFORMS
+1. PLATFORMS
 
 The long-term goal of CL-MPI is to provide a portable Common Lisp
 binding for MPI. I hope that eventually, any Common Lisp
@@ -49,19 +61,22 @@ Tested Lisp implementations.
    - CMU Common Lisp 19e
 
 Successfully tested configurations:
-1) MPICH 1.2.5.3-2 on Ubuntu Linux 8.04 with SBCL 1.0.28
+1) MPICH 1.2.5.3-2 on Ubuntu Linux 8.04 (64-bit)with SBCL 1.0.28 (64-bit)
 2) MPICH 1.2.5.3-2 on Ubuntu Linux 8.04 with CMUCL 19e
-3) MPICH2-1.0.8p1 on Ubuntu Linux 8.04 with SBCL 1.0.28
+3) MPICH2-1.0.8p1 on Ubuntu Linux 8.04 (64-bit) with SBCL 1.0.28 (64-bit)
+
+In principle, CL-MPI should work with any Common Lisp implementation
+supported by CFFI. The above are the only configurations I have tested
+so far.
 
 I have also tried OpenMPI 1.3.2 (Ubuntu Linux 8.04) + SBCL 1.0.28.
-While CL-MPI appears to build normally, any call to an MPI function results in a crash.
-This may or may not be be related to:
+While CL-MPI appears to build normally, any call to an MPI function
+results in a crash.  This may or may not be be related to:
 https://bugs.launchpad.net/ubuntu/+source/openmpi/+bug/210273
 https://bugs.launchpad.net/ubuntu/+source/python-numpy/+bug/307901
 Since my own projects are currently based on MPICH 1.2 and MPICH2, I
-haven't put too much effort into OpenMPI. 
-Please let me know if you get CL-MPI working with OpenMPI!
-
+haven't put too much effort into OpenMPI.  Please let me know if you
+get CL-MPI working with OpenMPI!
 
 
 
@@ -80,22 +95,16 @@ Please let me know if you get CL-MPI working with OpenMPI!
 -------------------
 QUICKSTART 
 The included Makefile should work if you are using a
-standard installation of SBCL and MPICH,
+standard installation of SBCL (where the sbcl binary is at /usr/local/bin),
+and MPICH1.2 installed with apt-get install on a Debian-based system:
 or a standard installatin of CMUCL and MPICH
-try: 
-   [for SBCL]
    make asdf-links    <-- creates links to this directory from the standard local
    make test-sbcl
-
-   [for CMU]
-    make test-cmu
-
-If the above make command doesn't result in the CL-MPI test suite
+If your configurations differs from the above, or if the above make command doesn't result in the CL-MPI test suite
 being executed, then some installation steps may be necessary, so
 continue reading!
 
 ------------------
-
 
 a) Install all of the systems which CL-MPI depends on:
   1) Install a supported MPI implementation (currently only MPICH)
@@ -105,29 +114,39 @@ a) Install all of the systems which CL-MPI depends on:
 
 b) Configure the installation.
 
-  0) Open cl-mpi-configure.lisp in an editor.
+  Open cl-mpi-configure.lisp in an editor.
 
-  1) Specify location of MPI header file
+  ** Note that cl-mpi-confiure.lisp in the CL-MPI distribution
+     contains a standard configuration which uses MPICH1.2 and
+     aconfiguration which uses MPICH2, and you can just
+     comment/uncomment the appropriate #+nil reader macros to get you
+     started.
+
+
+  0) If you are using MPICH2, you must make sure that *features* contains the symbol mpich2, e.g,
+        (pushnew :mpich1 *features*)
+
+  1) Specify location of MPI header file, mpi.h
      Modify the following line so that it points to the correct location for the mpi.h header file
      (defvar *mpi-header-file* "/usr/include/mpi/mpi.h")
 
-  2) Specify MPI shared library location
-     The second form in cl-mpi-configure.lisp configures how the MPI shared library is loaded.
+  2) Specify MPI shared library location:
+     There must be a function in cl-mpi-configure.lisp named load-mpi-foreign-libraries, which
+     is responsible for loading the foreign library (MPI shared library) into CFFI.
+
      For example, the current default is:          
-     (eval-when (:compile-toplevel :load-toplevel :execute)
         (defun load-mpi-foreign-libraries ()
-           (cffi:use-foreign-library "/usr/lib/mpich-shmem/lib/shared/libmpich-shmem.so") ; this should work for a standard MPICH implementation
-        )
-        (load-mpi-foreign-libraries))
-        (format t "Loaded MPI libraries!~%"))
-
-     Modify the string after cffi:use-foreign-library to point to the MPI shared library (.so file) to load.
+           (cffi:use-foreign-library "/usr/lib/mpich-shmem/lib/shared/libmpich-shmem.so")) ; this should work for a standard MPICH1.2 implementation
+       load-mpi-foreign-libraries is called by mpi.lisp
 
 
-  3) If you are using MPICH2, uncomment the line:
-     Otherwise, leave this line commented
-
-
+    ** If you are using MPICH2: For MPICH2, loading the mpich shared
+      library is insufficient.  in the cl-mpi/mpich2-stub directory,
+      "make" will generate a shared library, libmpiskeleton.so.1.0.1, which contains all of the
+      required objects, and this can be loaded as follows:
+      (defun load-mpi-foreign-libraries ()
+         (cffi:use-foreign-library "/home/fukunaga/cl-mpi/mpich2-stub/libmpiskeleton.so.1.0.1"))
+       )
 
 
 
@@ -137,6 +156,12 @@ c) Build CL-MPI
 Start Lisp in the directory where the CL-MPI sources reside, and build the CL-MPI system:
 
 CL-USER> (asdf:operate 'asdf:compile-op 'cl-mpi)
+
+
+Or (suggested if you are using SBCL or CMUCL), there is a Makefile which can be used in the cl-mpi direcory:
+      make test-sbcl      
+ or   make test-cmucl
+
 
 ===================================================
 4. TESTING
@@ -176,6 +201,21 @@ MPI implementation.
 
 
 
+===================================================
+4. DOCUMENTATION/EXAMPLES:
+
+
+Sorry, not much user-level documentation yet, other than in doc strings and comments.
+
+Before using CL-MPI, it is necessary to be familiar with the MPI programming model.
+Here is an excellent MPI tutorial: https://computing.llnl.gov/tutorials/mpi/
+
+
+
+In the cl-mpi/examples directory, there are several examples which
+illustrate basic usage, including: a hello world, numerical integration, Mandelbrot set
+image generator, and a version of the "GA-based image compression" made
+famous by Roger Alsing's "Evolving Mona Lisa" demo.
 
 
 ===================================================

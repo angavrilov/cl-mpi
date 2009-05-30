@@ -1,5 +1,5 @@
 ;;;
-;;; A CL-MPI implementation of the famous "Evo-Lisa" image compression demo by Roger Alsoing
+;;; A CL-MPI implementation of the famous "Evo-Lisa" image compression demo by Roger Alsing
 ;;;  http://rogeralsing.com/2008/12/07/genetic-programming-evolution-of-mona-lisa/
 ;;; The code is derived from Yann N. Dauphin's Clojure code
 ;;;  http://npcontemplation.blogspot.com/2009/01/clojure-genetic-mona-lisa-problem-in.html
