@@ -1139,7 +1139,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
     (tracep *trace1* t "Reduce: lisp-type=~a, count=~a, base-type=~a ~%" (obj-tspec-type metadata)  count base-typespec)
     (assert (/= +string+ meta-id))
     ;; This function will only handle simple arrays of base objects!
-    (assert (find (typespec-lisp-type base-typespec) '(single-float double-float fixnum)))
+    (assert (find (typespec-lisp-type base-typespec) '(single-float double-float fixnum (signed-byte 32))))
     (cffi:with-foreign-objects ((sendbuf (typespec-cffi-type base-typespec) (obj-tspec-count metadata))
 				(recvbuf (typespec-cffi-type base-typespec) (obj-tspec-count metadata)))
       (cond ((= +simple-array+ meta-id)
