@@ -188,7 +188,7 @@ THE SOFTWARE.
 	  (t ; (/= root (mpi-comm-rank))
 	   ;;(let ((received (mpi-receive root (type-of data) (if (arrayp data) (length data) 1))))
 	   (formatp t "expecting to receive object of type ~a" (type-of data))
-	   (let ((received (mpi-receive1 root (type-of data))));; (if (arrayp data) (length data) 1))))
+	   (let ((received (mpi-receive1 root (type-of data) (if (arrayp data) (length data) 1))))
 	     (formatp t "received  ~a~%" received)
 	     (testassert (equalp received data)))))))
 
@@ -412,7 +412,7 @@ THE SOFTWARE.
 	   (loop for i from 1 below (mpi-comm-size) do
 		 (mpi-send-string (format nil "Rank 0 to Rank ~a probe test.~%" i) i :tag 1234)))
 	  (t
-	   (let ((status (mpi-probe MPI_ANY_SOURCE MPI_ANY_TAG :blocking t)))
+	   (let ((status (mpi-probe MPI_ANY_SOURCE MPI_ANY_TAG :blocking t :base-type 'character)))
 	     (formatp t "probe detected message from ~a, count=~a, tag=~a, error=~a" 
 		      (status-source status)(status-count status)(status-tag status)(status-error status))
 	     (formatp t "received message: ~a" (mpi-receive-string (status-source status) 

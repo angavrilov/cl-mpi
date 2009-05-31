@@ -90,6 +90,7 @@ Some of the documentation strings are copied or derived from:
 
 (cffi:defcfun ("MPI_Probe" MPI_Probe) :int (source :int)(tag :int)(communicator MPI_Comm)  (status :pointer))
 
+
 ;;       Non-Blocking communications
 (cffi:defcfun ("MPI_Isend" MPI_Isend) :int (buf :pointer) (count :int) (datatype MPI_Datatype) (dest :int) (tag :int) (comm MPI_Comm)(request :pointer))
 (cffi:defcfun ("MPI_Ibsend" MPI_Ibsend) :int (buf :pointer) (count :int) (datatype MPI_Datatype) (dest :int) (tag :int) (comm MPI_Comm)(request :pointer))
@@ -168,7 +169,7 @@ Some of the documentation strings are copied or derived from:
 	   )))))
 
 (defstruct status
-  (count 0 :type (signed-byte 32))
+  (count nil ) ;; will usually be a (signed-byte 32), but nil means that the count could not be computed with MPI_Get_count at the time this status object was created
   (source 0 :type (signed-byte 32))
   (tag 0 :type (signed-byte 32))
   (error 0 :type (signed-byte 32)))
@@ -178,9 +179,11 @@ Some of the documentation strings are copied or derived from:
     (call-mpi (MPI_Get_count status mpi-type count))
     (cffi:mem-aref count :int)))
 
-(defun MPI_Status->mpi-status (status); status is a CFFI pointe to an MPI_Status object
+(defun MPI_Status->mpi-status (status mpi-type); status is a CFFI pointe to an MPI_Status object
   "returns a Lisp-space status object, equivalent to the MPI_Status object"
-  (make-status :count (mpi-get-count status :MPI_CHAR) ;(cffi:foreign-slot-value status 'MPI_Status 'count)
+  (make-status :count (if mpi-type
+			  (mpi-get-count status mpi-type)
+			  nil)
 	       :source (cffi:foreign-slot-value status 'MPI_Status 'MPI_SOURCE)
 	       :tag (cffi:foreign-slot-value status 'MPI_Status 'MPI_TAG)
 	       :error (cffi:foreign-slot-value status 'MPI_Status 'MPI_ERROR)))
@@ -302,9 +305,12 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
 ;;;
 ;;; Metadata manipulation
 ;;;
+;;; ** This is very inefficient -- need to change implementation to something like a hash table
+;;;
 
 (defparameter *lisp-cffi-mpi-conversions*
   '(
+    (bit 1 :MPI_CHAR :char 0)
     ((signed-byte 8) 1 :MPI_CHAR :char 0)
     ((unsigned-byte 8) 1 :MPI_UNSIGNED_CHAR :unsigned-char 1)
     ((signed-byte 16) 2 :MPI_SHORT :short 2)
@@ -378,6 +384,13 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
 (defun find-typespec (lisp-type)
   (find lisp-type *lisp-cffi-mpi-conversions* :test (lambda (x y) ;;(format t "x=~a, y=~a~%" x y)
 						      (subtypep x (first y)))))
+
+(defun lisp-type->mpi-type (lisp-type)
+  (typespec-mpi-type (find-typespec lisp-type)))
+;  (multiple-value-bind (lisp-type size mpi-type cffi-type id)
+;      (get-typespec lisp-type)
+;    mpi-type))
+
 
 (defun get-typespec-by-index (lisp-type-index)
   (loop for ts in *lisp-cffi-mpi-conversions* do
@@ -552,7 +565,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
     (cffi:with-foreign-objects ((mpi-status 'MPI_Status))
       (cffi:with-foreign-object  (buf cffi-type count)
 	(call-mpi (MPI_Recv buf count mpi-type source tag comm (cffi:mem-aref mpi-status 'MPI_Status)))
-	(let ((status (MPI_Status->mpi-status mpi-status)))
+	(let ((status (MPI_Status->mpi-status mpi-status mpi-type)))
 	  (tracep *trace1* t "received object ~a, status=~a~%" (cffi:mem-aref buf cffi-type) status)
 	  (values (if (subtypep type '(simple-array * *))
 		      (let ((a (make-array count :element-type base-type)))
@@ -561,7 +574,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
 		      (cffi:mem-aref buf cffi-type))
 		  status))))))
 
-(defun mpi-receive1 (source type &key (tag +default-tag+)(comm :MPI_COMM_WORLD))
+(defun mpi-receive1 (source type count &key (tag +default-tag+)(comm :MPI_COMM_WORLD))
   "Smart receiver protocol -- assumes that receiver knows type of data to receive
    intended to matches call to mpi-send
    Blocking receive function.
@@ -569,12 +582,16 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
   [See MPI_RECV docs at  http://www.mpi-forum.org/docs/mpi-11-html/node34.html]
   will allocate and return a new object.
   "
-  (let* ((status (mpi-probe source tag))
-	 (count (status-count status))) 
-    ;; XXX 2008-7-23 it seems that the count field in status returns the number of elements in an array, 
-    ;; in case we sent an array; on the other hand, if we sent a basic object, 
-    ;; the count field contains the # of bytes used by the basic object.
-    ;; This means that we'll overallocate the buffer in case of a basic object...
+  (let* ((base-type (cond ((is-string-type type)
+			   'character
+			  )
+			 ((subtypep type '(simple-array * *))
+			  (second type) )
+			 (t
+			  type)))
+	 (status (mpi-probe source tag :base-type base-type))
+	 (count (status-count status)))
+    (assert count)
     (tracep *trace1* t "mpi-receive1 probed: status=~a~%" status)
     (mpi-receive source type count :tag tag :comm comm)))
 
@@ -719,7 +736,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
     (cffi:with-foreign-objects ((mpi-status 'MPI_Status))
       (cffi:with-foreign-object (array :int 3)
 	(call-mpi (MPI_Recv array 8 :MPI_INT source +metadata-tag+ comm (cffi:mem-aref mpi-status 'MPI_Status)))
-	(let ((status (MPI_Status->mpi-status mpi-status)))
+	(let ((status (MPI_Status->mpi-status mpi-status :MPI_INT)))
 	  (declare (ignore status));;XXX TEMP
 	  (setf base-type-id (cffi:mem-aref array :int 0))
 	  (setf count (cffi:mem-aref array :int 1))
@@ -741,7 +758,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
 	     (cffi:with-foreign-objects ((mpi-status 'MPI_Status))
 	       (cffi:with-foreign-object (buf cffi-type count)
 		 (call-mpi (MPI_Recv buf count mpi-type source tag comm (cffi:mem-aref mpi-status 'MPI_Status)))
-		 (let ((status (MPI_Status->mpi-status mpi-status)))
+		 (let ((status (MPI_Status->mpi-status mpi-status mpi-type)))
 		   (declare (ignore status))
 		   ;;(tracep *trace1* t "received object ~a, status=~a~%" (cffi:mem-aref buf cffi-type) status)
 		   (cond ((= +simple-array+ meta-id);(> count 1)
@@ -781,7 +798,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
 	     (cffi:foreign-slot-value mpi-status 'MPI_Status 'MPI_SOURCE)
 	     (cffi:foreign-slot-value mpi-status 'MPI_Status 'MPI_TAG)
 	     (cffi:foreign-slot-value mpi-status 'MPI_Status 'MPI_ERROR))
-    (MPI_Status->mpi-status mpi-status)))
+    (MPI_Status->mpi-status mpi-status nil)))
 
 
 (defun copy-requests-sequence-to-c-array (num-requests requests c-requests)
@@ -805,8 +822,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
 				(c-requests :pointer num-requests))
       (copy-requests-sequence-to-c-array num-requests requests c-requests)
       (call-mpi (MPI_Waitany num-requests c-requests completed-index mpi-status))
-;  (break)
-      (values (cffi:mem-aref completed-index :int) (MPI_Status->mpi-status mpi-status)))))
+      (values (cffi:mem-aref completed-index :int) (MPI_Status->mpi-status mpi-status nil)))))
 
 (defun mpi-wait-any2 (requests)
   "returns (values received_request status requests_minus_completed_request)
@@ -831,7 +847,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
       ;;(formatp t "past MPI_Waitall call")
       (let ((statuses (make-array num-requests)))
 	(loop for i from 0 below num-requests do 
-	      (setf (aref statuses i) (MPI_Status->mpi-status (cffi:mem-aref mpi-statuses 'MPI_Status i))))
+	      (setf (aref statuses i) (MPI_Status->mpi-status (cffi:mem-aref mpi-statuses 'MPI_Status i) nil)))
 	statuses))))
 
 #+nil
@@ -857,7 +873,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
 ;;       ;;(formatp t "past MPI_Waitall call")
 ;;       (let ((statuses (make-array num-requests)))
 ;; 	(loop for i from 0 below num-requests do 
-;; 	      (setf (aref statuses i) (MPI_Status->mpi-status (cffi:mem-aref mpi-statuses 'MPI_Status i))))
+;; 	      (setf (aref statuses i) (MPI_Status->mpi-status (cffi:mem-aref mpi-statuses 'MPI_Status i) nil)))
 ;; 	statuses))))
 
 (defun mpi-test-all (requests)
@@ -873,7 +889,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
       ;;(formatp t "past MPI_Testall call")
       (let ((statuses (make-array num-requests)))
 	(loop for i from 0 below num-requests do 
-	      (setf (aref statuses i) (MPI_Status->mpi-status (cffi:mem-aref mpi-statuses 'MPI_Status i))))
+	      (setf (aref statuses i) (MPI_Status->mpi-status (cffi:mem-aref mpi-statuses 'MPI_Status i) nil)))
 	(values (= 1 (cffi:mem-aref flag :int)) statuses)))))
 
 (defun mpi-test-any (requests)
@@ -885,14 +901,14 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
       (copy-requests-sequence-to-c-array num-requests requests c-requests)
       (call-mpi (MPI_Testany num-requests c-requests out-index flag mpi-status))
       ;;(formatp t "past MPI_Testany call")
-      (values (= 1 (cffi:mem-aref flag :int)) (cffi:mem-aref out-index :int) (MPI_Status->mpi-status mpi-status)))))
+      (values (= 1 (cffi:mem-aref flag :int)) (cffi:mem-aref out-index :int) (MPI_Status->mpi-status mpi-status nil)))))
 
 (defun mpi-test (request)
   "test whether request completed"
   (cffi:with-foreign-object (flag :int)
     (cffi:with-foreign-object (status 'MPI_Status)
       (call-mpi (MPI_Test (request-mpi-request request) flag status))
-      (values (= 1 (cffi:mem-aref flag :int)) (MPI_Status->mpi-status status)))))
+      (values (= 1 (cffi:mem-aref flag :int)) (MPI_Status->mpi-status status nil)))))
 
 (defun mpi-wait/test-some (requests mode)
   "block until some request(s) complete.
@@ -912,7 +928,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
 	(tracep *trace1* t "num-done=~a~%" num-done)
 	(loop for i from 0 below num-done collect
 	      (cons (cffi:mem-aref c-done-indices :int i) ;nil))))))
-		    (MPI_Status->mpi-status (cffi:mem-aref mpi-statuses 'MPI_Status  i))))))))
+		    (MPI_Status->mpi-status (cffi:mem-aref mpi-statuses 'MPI_Status  i) nil)))))))
 
 (defun mpi-wait/test-some2 (requests mode)
   "returns (values (list_of (cons received_request status)) remaining-requests
@@ -953,7 +969,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
 ;    (make-request :mpi-request request :buf buf)))
     (make-request :mpi-request request :buf buf :count buf-size-bytes)))
 
-(defun mpi-probe (source tag &key (comm :MPI_COMM_WORLD)(blocking t))
+(defun mpi-probe (source tag &key (base-type nil)(comm :MPI_COMM_WORLD)(blocking t))
   "Performs a (blocking or nonblocking) test for a message from a given source with given tag. 
    The 'wildcards' MPI_ANY_SOURCE and MPI_ANY_TAG may be used to test for 
    a message from any source or with any tag. 
@@ -963,13 +979,12 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
   (cond (blocking
 	 (cffi:with-foreign-objects ((mpi-status 'MPI_Status))
 	   (MPI_Probe source tag comm (cffi:mem-aref mpi-status 'MPI_Status))
-	   (MPI_Status->mpi-status mpi-status)))
+	   (MPI_Status->mpi-status mpi-status (lisp-type->mpi-type base-type))))
 	(t ; non-blocking
 	 (cffi:with-foreign-objects ((mpi-status 'MPI_Status)
 				     (flag :int))
 	   (MPI_Iprobe source tag comm flag (cffi:mem-aref mpi-status 'MPI_Status))
-	   (if (= 0 (cffi:mem-aref flag :int)) nil (MPI_Status->mpi-status mpi-status))))))
-
+	   (if (= 0 (cffi:mem-aref flag :int)) nil (MPI_Status->mpi-status mpi-status (lisp-type->mpi-type base-type)))))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;
