@@ -44,7 +44,13 @@ remove-asdf-links:
 	rm -f $(ASDF_SITE_DIR)/cl-mpi
 
 ####################################################
-
+tarball: clean
+	echo "Creating distribution tarball in parent directory.."
+	rm -fr /tmp/cl-mpi
+	cp -r $(CURRENT_DIR) /tmp
+	rm -rf /tmp/cl-mpi/.svn*
+	rm -rf /tmp/cl-mpi/*/.svn*
+	tar -C /tmp -zcvf ../cl-mpi.tar.gz cl-mpi
 clean:
-	rm -f *.o *.fasl *.x86f *.sse2f mpi-grovel.c mpi-grovel.grovel-tmp.lisp mpi-grovel
+	rm -f *svn-commit.tmp* *~ *.o *.fasl *.x86f *.sse2f mpi-grovel.c mpi-grovel.grovel-tmp.lisp mpi-grovel
 
