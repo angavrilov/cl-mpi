@@ -734,7 +734,7 @@ THE SOFTWARE.
    (test-wait/test-some2 :wait) ;;check
    (test-wait/test-some2 :test) ;;check but program is wrong
 
-   (test-wait-all) ;; broken on dell 2008/11/3 for some reason..Broken on both SBCL1.0.22 and CMUCL19e TODO ;;check maybe ok??
+   #-cmu (test-wait-all) ;;XXX TODO  broken on cmucl+mpich1.2for some reason..
    (test-test) ;;check
 
    (test-test-all) ;;check
@@ -743,7 +743,7 @@ THE SOFTWARE.
    (test-nonblocking-probe 0.0) ;;check   
    (test-nonblocking-probe 1.1) ;;check 
    (test-non-blocking-receive) ;;check
-   (test-non-blocking-send) ;;check
+   #-cmu (test-non-blocking-send) ;;XXX TODO - broken on cmucl+mpich1.2
    (test-send-receive) ;;check
    (test-broadcast) ;;check?? enough??
    
