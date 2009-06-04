@@ -252,6 +252,13 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
 	  )
 	(cffi:foreign-free argv)))))
 
+(defmacro with-mpi (&body body)
+  "executes body in an MPI environment (initializes and finalizes MPI before/after body)"
+  `(progn
+     (mpi-init)
+     (unwind-protect (progn ,@body)
+       (mpi-finalize))))
+
 (defun mpi-get-processor-name ()
   "
    This routine returns the name of the processor on which it was called at the moment of the call. 

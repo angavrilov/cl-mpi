@@ -21,7 +21,7 @@
 	   mpi-send-auto mpi-receive-auto ;high-level interface
 
 	   formatp formatp0 tracep
-
+	   with-mpi
 	   ;;
 	   status status-count status-source status-tag status-error make-status
 	   *trace1* ; toggle this to seee some trace info 
