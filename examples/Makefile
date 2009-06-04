@@ -10,12 +10,14 @@ CMUCL = /usr/local/bin/lisp
 
 NUM_PROCS = 4
 
+
 sbcl-hello-world:
 	$(SBCL) --eval "(progn (compile-file \"mpi-hello-world.lisp\")(sb-ext:quit))"
-	mpirun -np $(NUM_PROCS) $(SBCL) --load "mpi-hello-world"
+	mpirun -np $(NUM_PROCS) $(SBCL) --load "mpi-hello-world" --eval "(progn (mpi-hello-world)(sb-ext:quit))"
 
 cmucl-hello-world:
-	mpirun -np $(NUM_PROCS) $(CMUCL) -load "mpi-hello-world"
+	$(CMUCL) -eval "(progn (compile-file \"mpi-hello-world.lisp\")(ext:quit))"
+	mpirun -np $(NUM_PROCS) $(CMUCL) -load "mpi-hello-world" -eval "(progn (mpi-hello-world)(ext:quit))"
 
 
 
@@ -26,11 +28,14 @@ cmucl-integrate:
 	mpirun -np $(NUM_PROCS) /usr/local/bin/sbcl --load "trapezoidal-integration"
 
 
+sbcl-mandel-bench1:
+	$(SBCL) --eval "(progn (compile-file \"mandel-bench-1.lisp\")(sb-ext:quit))"
+	mpirun -np $(NUM_PROCS) $(SBCL) --load "mandel-bench-1" --eval "(progn (main) (sb-ext:quit))"
 
 
 sbcl-mandelbrot:
 	$(SBCL) --eval "(progn (compile-file \"mandelbrot.lisp\")(sb-ext:quit))"
-	mpirun -np $(NUM_PROCS) $(SBCL) --load "mandelbrot" --eval "(progn (mandel 1000 1024 1024) (sb-ext:quit))"
+	mpirun -np $(NUM_PROCS) $(SBCL) --load "mandelbrot" --eval "(progn (mandel 100 5000 5000) (sb-ext:quit))"
 
 
 
