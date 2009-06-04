@@ -15,6 +15,5 @@
 		     ;; receive and print message from each processor
 		     (let ((message (mpi:mpi-receive-auto  source :tag tag)))
 		       (format t "~a~%" message))))))
-    (break)
     ))
 

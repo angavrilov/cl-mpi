@@ -7,8 +7,7 @@ SBCL = /usr/local/bin/sbcl
 CMUCL = /usr/local/bin/lisp
 
 # number of processes to use (you should use at least 2, as some of the demos require 2 processors)
-
-NUM_PROCS = 4
+NUM_PROCS = 2
 
 
 sbcl-hello-world:
@@ -25,13 +24,23 @@ sbcl-integrate:
 	$(SBCL) --eval "(progn (compile-file \"trapezoidal-integration.lisp\")(sb-ext:quit))"
 	mpirun -np $(NUM_PROCS) $(SBCL) --load "trapezoidal-integration"
 cmucl-integrate:
-	mpirun -np $(NUM_PROCS) /usr/local/bin/sbcl --load "trapezoidal-integration"
+	$(CMUCL) -eval "(progn (compile-file \"trapezoidal-integration.lisp\")(ext:quit))"
+	mpirun -np $(NUM_PROCS) $(CMUCL) -load "trapezoidal-integration"
 
 
 sbcl-mandel-bench1:
 	$(SBCL) --eval "(progn (compile-file \"mandel-bench-1.lisp\")(sb-ext:quit))"
 	mpirun -np $(NUM_PROCS) $(SBCL) --load "mandel-bench-1" --eval "(progn (main) (sb-ext:quit))"
 
+
+cmucl-mandel-bench1:
+	$(CMUCL) -eval "(progn (compile-file \"mandel-bench-1.lisp\")(ext:quit))"
+	mpirun -np $(NUM_PROCS) $(CMUCL) -load "mandel-bench-1" -eval "(progn (main) (ext:quit))"
+
+#########################################
+#
+# More "experimental" demos
+#
 
 sbcl-mandelbrot:
 	$(SBCL) --eval "(progn (compile-file \"mandelbrot.lisp\")(sb-ext:quit))"
