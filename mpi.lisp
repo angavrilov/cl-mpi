@@ -552,7 +552,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
 	     (mpi-send-1 c-str count :MPI_CHAR  destination :tag tag :comm comm :mode mode)))
 	  (t ;non-blocking
 	   ;; must return a request handle
-	   (let ((request (cffi:foreign-alloc :pointer))
+	   (let ((request (cffi:foreign-alloc 'MPI_Request))
 		 (buf (cffi:foreign-alloc :char :count count)))
              (cffi:lisp-string-to-foreign s buf (1+ count));; need to add 1 to count (and also null-terminates the string)
 	     (case mode
@@ -725,15 +725,9 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
 
 
 (defun copy-requests-sequence-to-c-array (num-requests requests c-requests)
-  (loop for r from 0 below num-requests do
-	#+mpich2
-	(setf (cffi:mem-aref c-requests :int r)
-	      (cffi:mem-aref (request-mpi-request (elt requests r)) :int))
-	#-mpich2
-	(setf (cffi:mem-aref c-requests :pointer r)
-	      (cffi:mem-aref (request-mpi-request (elt requests r)) :pointer))
-	))
-
+  (loop for r from 0 below num-requests
+     do (setf (cffi:mem-aref c-requests 'MPI_Request r)
+              (cffi:mem-ref (request-mpi-request (elt requests r)) 'MPI_Request))))
 
 (defun mpi-wait-any (requests)
   "block until one request completes.
@@ -742,7 +736,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
     (cffi:with-foreign-objects ((mpi-status 'MPI_Status)
 				;(completed-index :int)
 				(completed-index :pointer)
-				(c-requests :pointer num-requests))
+				(c-requests 'MPI_Request num-requests))
       (copy-requests-sequence-to-c-array num-requests requests c-requests)
       (call-mpi (MPI_Waitany num-requests c-requests completed-index mpi-status))
       (values (cffi:mem-aref completed-index :int) (MPI_Status->mpi-status mpi-status nil)))))
@@ -763,8 +757,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
   (let* ((num-requests (length requests)))
     (tracep *trace1* t "num-requests = ~a, requests=~a" num-requests requests)
     (cffi:with-foreign-objects ((mpi-statuses 'MPI_Status num-requests)
-				(c-requests :pointer num-requests))
-
+				(c-requests 'MPI_Request num-requests))
       (copy-requests-sequence-to-c-array num-requests requests c-requests)
       (call-mpi (MPI_Waitall num-requests c-requests mpi-statuses))
       ;;(formatp t "past MPI_Waitall call")
@@ -805,8 +798,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
   (let ((num-requests (length requests)))
     (cffi:with-foreign-objects ((mpi-statuses 'MPI_Status num-requests)
 				(flag :int)
-				(c-requests :pointer num-requests))
-
+				(c-requests 'MPI_Request num-requests))
       (copy-requests-sequence-to-c-array num-requests requests c-requests)
       (call-mpi (MPI_Testall num-requests c-requests flag mpi-statuses))
       ;;(formatp t "past MPI_Testall call")
@@ -820,7 +812,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
     (cffi:with-foreign-objects ((mpi-status 'MPI_Status)
 				(out-index :int)
 				(flag :int)
-				(c-requests :pointer num-requests))
+				(c-requests 'MPI_Request num-requests))
       (copy-requests-sequence-to-c-array num-requests requests c-requests)
       (call-mpi (MPI_Testany num-requests c-requests out-index flag mpi-status))
       ;;(formatp t "past MPI_Testany call")
@@ -840,7 +832,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
     (cffi:with-foreign-objects ((mpi-statuses 'MPI_Status num-requests)
 				(c-done-indices :int num-requests)
 				(c-outcount :int)
-				(c-requests :pointer num-requests))
+				(c-requests 'MPI_Request num-requests))
       (copy-requests-sequence-to-c-array num-requests requests c-requests)
       (case mode
 	(:wait
@@ -887,7 +879,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
    INEFFICIENT - shouldn't allocate buffer every time."
   (declare (type (unsigned-byte 32) source tag))
   (let ((buf (cffi:foreign-alloc :char :count buf-size-bytes))
-	(request (cffi:foreign-alloc :pointer)))
+	(request (cffi:foreign-alloc 'MPI_Request)))
     (call-mpi (MPI_Irecv buf buf-size-bytes :MPI_CHAR source tag :MPI_COMM_WORLD request))
 ;    (make-request :mpi-request request :buf buf)))
     (make-request :mpi-request request :buf buf :count buf-size-bytes)))

@@ -41,7 +41,11 @@
 
 (constant (MPI_MAX_PROCESSOR_NAME "MPI_MAX_PROCESSOR_NAME"))
 
-;; The cencelled field is new in MPI2, not in MPI1.
+;; Request type
+
+(ctype MPI_Request "MPI_Request")
+
+;; The cancelled field is new in MPI2, not in MPI1.
 ;; It seems OK to just ignore this field, since I'm not using it yet in CL-MPI.
 #+(or mpich1 mpich2)
 (cstruct MPI_Status "MPI_Status"
