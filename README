@@ -115,41 +115,22 @@ a) Install all of the systems which CL-MPI depends on:
 
 b) Configure the installation.
 
-  Open cl-mpi-configure.lisp in an editor.
+  If your system is already fully configured for compilation
+  of C programs, i.e. PATH to mpicc, MPI_LIB and MPI_INCLUDE
+  are properly set, no additional configuration is necessary.
+  The system also checks some predefined paths.
 
-  ** Note that cl-mpi-confiure.lisp in the CL-MPI distribution
-     contains a standard configuration which uses MPICH1.2 and
-     aconfiguration which uses MPICH2, and you can just
-     comment/uncomment the appropriate #+nil reader macros to get you
-     started.
+  (MPI_LIB and MPI_INCLUDE are not necessary if their correct
+   values are ../lib and ../include relative to mpicc location)
 
+  Otherwise, you need to edit cl-mpi-configure lisp,
+  set values for *mpi-header-file*, *mpi-shared-library*,
+  and ensure that the proper feature is pushed.
 
-  0) If you are using MPICH2, you must make sure that *features* contains the symbol mpich2, e.g,
-        (pushnew :mpich1 *features*)
-
-  1) Specify location of MPI header file, mpi.h
-     Modify the following line so that it points to the correct location for the mpi.h header file
-     (defvar *mpi-header-file* "/usr/include/mpi/mpi.h")
-
-  2) Specify MPI shared library location:
-     There must be a function in cl-mpi-configure.lisp named load-mpi-foreign-libraries, which
-     is responsible for loading the foreign library (MPI shared library) into CFFI.
-
-     For example, the current default is:          
-        (defun load-mpi-foreign-libraries ()
-           (cffi:use-foreign-library "/usr/lib/mpich-shmem/lib/shared/libmpich-shmem.so")) ; this should work for a standard MPICH1.2 implementation
-       load-mpi-foreign-libraries is called by mpi.lisp
-
-
-    ** If you are using MPICH2: For MPICH2, loading the mpich shared
-      library is insufficient.  in the cl-mpi/mpich2-stub directory,
-      "make" will generate a shared library, libmpiskeleton.so.1.0.1, which contains all of the
-      required objects, and this can be loaded as follows:
-      (defun load-mpi-foreign-libraries ()
-         (cffi:use-foreign-library "/home/fukunaga/cl-mpi/mpich2-stub/libmpiskeleton.so.1.0.1"))
-       )
-
-
+  If you are using mpich2, you may have to chdir into
+  the mpich2-stub directory, and build a helper library
+  called libmpiskeleton.so.1.0.1. This library is
+  automatically used by the configure file if it exists.
 
 ------------------------------------------
 c) Build CL-MPI

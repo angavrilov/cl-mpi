@@ -47,15 +47,10 @@ Some of the documentation strings are copied or derived from:
                debug:*debug-print-length* 25) ;; default 5
          (setf ext:*gc-verbose* nil)) ;;shut up the garbage collector
   )
-                                                                                                                   
-(eval-when (:compile-toplevel :load-toplevel :execute)
-  (setf *features* (remove ':newitem *features*))
-  (pushnew :newitem *features*)
-  (load-mpi-foreign-libraries) ; this is defined/customized in cl-mpi-configure.lisp
-  (in-package #:mpi)
-  )
-(in-package #:mpi)                                                                                                                   
 
+(in-package #:mpi)
+
+(load-mpi-foreign-libraries)
 
 ;; Environmental functions
 (cffi:defcfun ("MPI_Initialized" MPI_Initialized) :int (flag :pointer))
