@@ -1,6 +1,6 @@
 #|
 
-CL-MPI                                                                                                                   
+CL-MPI
 
 MPI bindings for Common Lisp
 
@@ -29,7 +29,7 @@ THE SOFTWARE.
 Some of the documentation strings are copied or derived from:
  MPI: A Message-Passing Interface Standard
  Message Passing Interface Forum
- Version 1.1: June, 1995. 
+ Version 1.1: June, 1995.
  which has the following copyright notice:
       (c) 1993, 1994, 1995 University of Tennessee, Knoxville,
       Tennessee. Permission to copy without fee all or part of this material
@@ -81,7 +81,7 @@ Some of the documentation strings are copied or derived from:
 	 (when (/= 0 ,err)
 	   (formatp t "~a failed with error code ~a" (quote ,mpi-fun-name) ,err)
 	   (break)
-	   ;;(when (mpi-initialized) (format t " on rank ~a (~a)" 
+	   ;;(when (mpi-initialized) (format t " on rank ~a (~a)"
 	   )))))
 
 (defstruct status
@@ -111,14 +111,14 @@ Some of the documentation strings are copied or derived from:
 
 (defun mpi-initialized ()
   "Returns true if MPI_INIT has been called and nil otherwise.
-   This routine may be used to determine whether MPI-INIT has been called. It is the only routine that may be called before MPI-INIT is called. 
+   This routine may be used to determine whether MPI-INIT has been called. It is the only routine that may be called before MPI-INIT is called.
    [See MPI_INITIALIZED docs at http://www.mpi-forum.org/docs/mpi-11-html/node151.html]"
   (cffi:with-foreign-object (flag :int 1)
     (call-mpi (MPI_Initialized flag))
     (= 1 (cffi:mem-aref flag :int 0))))
 
 (defun mpi-comm-rank (&optional(comm :MPI_COMM_WORLD))
-  "indicates the number of processes involved in a communicator. For MPI_COMM_WORLD, it indicates the total number of processes available 
+  "indicates the number of processes involved in a communicator. For MPI_COMM_WORLD, it indicates the total number of processes available
   [See MPI_COMM_RANK docs at  http://www.mpi-forum.org/docs/mpi-11-html/node101.html]"
   (if *enable-mpi*
       (cffi:with-foreign-object (my-id :int)
@@ -127,7 +127,7 @@ Some of the documentation strings are copied or derived from:
       0))
 
 (defun mpi-comm-size ()
-  "indicates the number of processes involved in a communicator. For MPI_COMM_WORLD, it indicates the total number of processes available 
+  "indicates the number of processes involved in a communicator. For MPI_COMM_WORLD, it indicates the total number of processes available
   [See MPI_COMM_SIZE docs at  http://www.mpi-forum.org/docs/mpi-11-html/node101.html]"
   (cffi:with-foreign-object (numprocs :int)
     (call-mpi (MPI_comm_size :MPI_COMM_WORLD numprocs))
@@ -177,8 +177,8 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
 
 (defun mpi-get-processor-name ()
   "
-   This routine returns the name of the processor on which it was called at the moment of the call. 
-   The name is a character string for maximum flexibility. From this value it must be possible to identify a specific piece of hardware; 
+   This routine returns the name of the processor on which it was called at the moment of the call.
+   The name is a character string for maximum flexibility. From this value it must be possible to identify a specific piece of hardware;
    possible values include 'processor 9 in rack 4 of mpp.cs.org' and '231' (where 231 is the actual processor number in the running homogeneous system).
 
    [See MPI_GET_PROCESSOR_NAME docs at  http://www.mpi-forum.org/docs/mpi-11-html/node143.html]"
@@ -196,21 +196,21 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
 (defun mpi-wtime ()
   "Returns a (double) floating-point number of seconds, representing elapsed wall-clock time since some time in the past.
 
-  The 'time in the past' is guaranteed not to change during the life of the process. 
+  The 'time in the past' is guaranteed not to change during the life of the process.
    The user is responsible for converting large numbers of seconds to other units if they are preferred.
 
-  This function is portable (it returns seconds, not 'ticks'), it allows high-resolution, and carries no unnecessary baggage. 
+  This function is portable (it returns seconds, not 'ticks'), it allows high-resolution, and carries no unnecessary baggage.
 
-  The times returned are local to the node that called them. There is no requirement that different nodes return 'the same time.' 
-  
+  The times returned are local to the node that called them. There is no requirement that different nodes return 'the same time.'
+
   [See MPI_WITME docs at  http://www.mpi-forum.org/docs/mpi-11-html/node150.html]"
-  ;;TODO (But see also the discussion of MPI_WTIME_IS_GLOBAL). 
+  ;;TODO (But see also the discussion of MPI_WTIME_IS_GLOBAL).
   (MPI_Wtime));does not return error, so don't wrap!
 
 (defun mpi-wtick ()
-  "Returns the resolution of MPI-WTIME in seconds. That is, it returns, as a double precision value, 
-    the number of seconds between successive clock ticks. For example, 
-    if the clock is implemented by the hardware as a counter that is incremented every millisecond, 
+  "Returns the resolution of MPI-WTIME in seconds. That is, it returns, as a double precision value,
+    the number of seconds between successive clock ticks. For example,
+    if the clock is implemented by the hardware as a counter that is incremented every millisecond,
     the value returned by MPI-WTICK should be 0.001
 
     [See MPI_WTICK docs at http://www.mpi-forum.org/docs/mpi-11-html/node150.html]"
@@ -237,7 +237,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
     ((signed-byte 8) 1 :MPI_CHAR :char 0)
     ((unsigned-byte 8) 1 :MPI_UNSIGNED_CHAR :unsigned-char 1)
     ((signed-byte 16) 2 :MPI_SHORT :short 2)
-    ((unsigned-byte 16) 2 :MPI_UNSIGNED_SHORT :unsigned-short 2)    
+    ((unsigned-byte 16) 2 :MPI_UNSIGNED_SHORT :unsigned-short 2)
     ((signed-byte 32) 4 :MPI_INT :int 3)
     ((unsigned-byte 32) 4 :MPI_UNSIGNED :unsigned-int 4)
     (single-float 4 :MPI_FLOAT :float 5)
@@ -334,16 +334,16 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
 (defun object->basetype (object)
   "Match basic typespec for object (values lisp-type bytes mpi-type cffi-type type-id object)"
   ;;(find (type-of object) *lisp-cffi-mpi-conversions* :test #'(lambda (x y) (equal x (typespec-lisp-type y)))))
-  (find (type-of object) *lisp-cffi-mpi-conversions* 
+  (find (type-of object) *lisp-cffi-mpi-conversions*
 	:test #'(lambda (x y) (subtypep x (typespec-lisp-type y)))))
 
-    
+
 (defun match-type (object &key (enable-default-conversion t))
   "Returns (values lisp-type lisp-base-type count mpi-type cffi-type type-id object)
    If enable-default-conversion is t, object is possibly converted (e.g., to a string)"
   (declare (optimize (speed 0) (debug 3)))
   (let ((base-typespec (object->basetype object)))
-    (cond (base-typespec 
+    (cond (base-typespec
 	   (make-obj-tspec :type (type-of object) :count 1 :base-typespec base-typespec))
 	  ((stringp object) ;;??? XXX is type string or (simple-arrah character *)?
 	   (make-obj-tspec :type '(simple-array character *) :count (length object) :base-typespec (find-typespec 'character)))
@@ -366,7 +366,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;
-;;; 
+;;;
 
 (defconstant +default-tag+ 1 "default tag for MPI_Send and MPI_Recv")
 
@@ -395,7 +395,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
    block until all messages currently in the buffer have been
    transmitted. Upon return of this function, the user may reuse or
    deallocate the space taken by the buffer.
-   *** Returns the size of the deallocated buffer ONLY. 
+   *** Returns the size of the deallocated buffer ONLY.
        Unlike the standard function, this Lisp binding will NOT return the address of
        the deallocated buffer. This is because I don't believe I should try to support the
        the 'nested libraries' scenario which is the rationale for returning the address
@@ -409,7 +409,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
       ;;(formatp t "*message-buffer*=~a~%" *message-buffer*)
       (MPI_Buffer_detach deallocated-buf-address c-deallocated-bytes)
 ;      (cffi:foreign-free *message-buffer*)
-      #+nil(formatp t "deallocated-buf-address=~a, deallocated ~a bytes~%" 
+      #+nil(formatp t "deallocated-buf-address=~a, deallocated ~a bytes~%"
 	      deallocated-buf-address (cffi:mem-aref c-deallocated-bytes :int))
       (setf *message-buffer* nil)
       (cffi:mem-aref c-deallocated-bytes :int))))
@@ -428,7 +428,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
 ;;; Basic point-to-point operations
 ;;;
 
-(defun mpi-send-1 (buf count mpi-type destination &key (tag +default-tag+) 
+(defun mpi-send-1 (buf count mpi-type destination &key (tag +default-tag+)
 		   (mode :basic)(comm :MPI_COMM_WORLD))
   "A low-level wrapper around the MPI_Send, MPI_Ssend, MPI_Rsend, and MPI_Bsend functions"
   (case mode
@@ -527,16 +527,16 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
    application buffer in the sending task is free for reuse. Note that
    this routine may be implemented differently on different systems. The
    MPI standard permits the use of a system buffer but does not require
-   it. Some implementations may actually use a synchronous send (MPI_Ssend) 
+   it. Some implementations may actually use a synchronous send (MPI_Ssend)
    to implement the basic blocking send.
    If blocking is nil, then a non-blocking send operation is used.
 
 
    if synchronous == t, then uses  MPI_Ssend, otherwise uses MPI_Send
-   Send vs Bsend vs Ssend:(let ((req (mpi-receive-string-noblock 
+   Send vs Bsend vs Ssend:(let ((req (mpi-receive-string-noblock
    In case of Send, nothing is guaranteed about the state of the receiver.
-      If ther receiver is not ready to read the data, then the data may be 
-      stored in a system buffer. 
+      If ther receiver is not ready to read the data, then the data may be
+      stored in a system buffer.
       However, it *might* be unsafe to assume anything about the size of the
       the system buffer, which might overflow.
     Ssend guarantees that we block until the recipient starts reading the data.
@@ -569,7 +569,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
   (declare (type (unsigned-byte 32) source tag))
   (cffi:with-foreign-objects ((status 'MPI_Status))
     (cffi:with-foreign-pointer (buf buf-size-bytes)
-;	(bogo-mpi-recv buf (cffi:mem-aref c-buf-size-bytes :int) :MPI_CHAR (cffi:mem-aref c-source :int) 
+;	(bogo-mpi-recv buf (cffi:mem-aref c-buf-size-bytes :int) :MPI_CHAR (cffi:mem-aref c-source :int)
 ;      (call-mpi (MPI_Recv buf buf-size-bytes :MPI_CHAR source tag :MPI_COMM_WORLD (cffi:mem-aref status 'MPI_Status)))
       (call-mpi (MPI_Recv buf buf-size-bytes :MPI_BYTE source tag :MPI_COMM_WORLD (cffi:mem-aref status 'MPI_Status)))
 
@@ -585,7 +585,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
   (cffi:with-foreign-objects ((status 'MPI_Status))
     (cffi:with-foreign-pointer (buf buf-size-bytes)
       ;;(formatp t "receiving string"); len ~a = ~a~%" count (cffi:foreign-string-to-lisp buf count nil))
-;	(bogo-mpi-recv buf (cffi:mem-aref c-buf-size-bytes :int) :MPI_CHAR (cffi:mem-aref c-source :int) 
+;	(bogo-mpi-recv buf (cffi:mem-aref c-buf-size-bytes :int) :MPI_CHAR (cffi:mem-aref c-source :int)
       (call-mpi (MPI_Irecv buf buf-size-bytes :MPI_CHAR source tag :MPI_COMM_WORLD (cffi:mem-aref status 'MPI_Status)))
       (let ((count (cffi:foreign-slot-value status 'MPI_Status 'count)))
 	;(formatp t "received string len ~a = ~a~%" count (cffi:foreign-string-to-lisp buf count nil))
@@ -601,7 +601,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
   (cffi:with-foreign-string (c-send-str send-str)
     (cffi:with-foreign-objects ((status 'MPI_Status)) ; the received status object
       (cffi:with-foreign-pointer (recv-buf recv-buf-size-bytes)
-	(call-mpi (MPI_Sendrecv 
+	(call-mpi (MPI_Sendrecv
 		   c-send-str (length send-str) :MPI_CHAR destination send-tag
 		   recv-buf recv-buf-size-bytes :MPI_CHAR source  recv-tag
 		   comm (cffi:mem-aref status 'MPI_Status)))
@@ -609,7 +609,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
 	  ;;(values (cffi:foreign-string-to-lisp recv-buf count nil) :count count))))))
 	  (values (cffi:foreign-string-to-lisp recv-buf :count count) count))))))
 
-(defun mpi-send-auto (data destination &key (tag +default-tag+) 
+(defun mpi-send-auto (data destination &key (tag +default-tag+)
 		      (mode :basic)(comm :MPI_COMM_WORLD))
   "Sends data to destination. Data is any Lisp object.
    INEFFICIENT: First sends metadata (type, count) which is necessary to set up the second
@@ -717,7 +717,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
   (cffi:with-foreign-object (mpi-status 'MPI_Status)
     (tracep *trace1* t "request=~a" request)
     (call-mpi (MPI_Wait (request-mpi-request request)  mpi-status))
-    (tracep *trace1* t "count=~a,source=~a,tag=~a,err=~a~%" (mpi-get-count mpi-status :MPI_CHAR) 
+    (tracep *trace1* t "count=~a,source=~a,tag=~a,err=~a~%" (mpi-get-count mpi-status :MPI_CHAR)
 	     (cffi:foreign-slot-value mpi-status 'MPI_Status 'MPI_SOURCE)
 	     (cffi:foreign-slot-value mpi-status 'MPI_Status 'MPI_TAG)
 	     (cffi:foreign-slot-value mpi-status 'MPI_Status 'MPI_ERROR))
@@ -726,7 +726,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
 
 (defun copy-requests-sequence-to-c-array (num-requests requests c-requests)
   (loop for r from 0 below num-requests do
-	#+mpich2 
+	#+mpich2
 	(setf (cffi:mem-aref c-requests :int r)
 	      (cffi:mem-aref (request-mpi-request (elt requests r)) :int))
 	#-mpich2
@@ -769,7 +769,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
       (call-mpi (MPI_Waitall num-requests c-requests mpi-statuses))
       ;;(formatp t "past MPI_Waitall call")
       (let ((statuses (make-array num-requests)))
-	(loop for i from 0 below num-requests do 
+	(loop for i from 0 below num-requests do
 	      (setf (aref statuses i) (MPI_Status->mpi-status (cffi:mem-aref mpi-statuses 'MPI_Status i) nil)))
 	statuses))))
 
@@ -795,7 +795,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
 ;;       (call-mpi (MPI_Waitall num-requests c-requests mpi-statuses))
 ;;       ;;(formatp t "past MPI_Waitall call")
 ;;       (let ((statuses (make-array num-requests)))
-;; 	(loop for i from 0 below num-requests do 
+;; 	(loop for i from 0 below num-requests do
 ;; 	      (setf (aref statuses i) (MPI_Status->mpi-status (cffi:mem-aref mpi-statuses 'MPI_Status i) nil)))
 ;; 	statuses))))
 
@@ -811,7 +811,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
       (call-mpi (MPI_Testall num-requests c-requests flag mpi-statuses))
       ;;(formatp t "past MPI_Testall call")
       (let ((statuses (make-array num-requests)))
-	(loop for i from 0 below num-requests do 
+	(loop for i from 0 below num-requests do
 	      (setf (aref statuses i) (MPI_Status->mpi-status (cffi:mem-aref mpi-statuses 'MPI_Status i) nil)))
 	(values (= 1 (cffi:mem-aref flag :int)) statuses)))))
 
@@ -862,7 +862,7 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
 	 (remaining-indices (set-difference (loop for i from 0 below num-original-requests collect i)
 					    done-indices)))
     (values (loop for index-status-pair in done-index-status-pairs
-		  for i = 0 then (1+ i) 
+		  for i = 0 then (1+ i)
 		  for index = (car index-status-pair)
 		  for status = (cdr index-status-pair) collect
 		  (cons (elt requests index) status))
@@ -893,11 +893,11 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
     (make-request :mpi-request request :buf buf :count buf-size-bytes)))
 
 (defun mpi-probe (source tag &key (base-type nil)(comm :MPI_COMM_WORLD)(blocking t))
-  "Performs a (blocking or nonblocking) test for a message from a given source with given tag. 
-   The 'wildcards' MPI_ANY_SOURCE and MPI_ANY_TAG may be used to test for 
-   a message from any source or with any tag. 
+  "Performs a (blocking or nonblocking) test for a message from a given source with given tag.
+   The 'wildcards' MPI_ANY_SOURCE and MPI_ANY_TAG may be used to test for
+   a message from any source or with any tag.
    ** Returns metadata for the message, not the message itself!
-   The actual source and tag are stored in the status struct, 
+   The actual source and tag are stored in the status struct,
    so we will return status (if a probe succeeds), nil otherwise, or blocks"
   (cond (blocking
 	 (cffi:with-foreign-objects ((mpi-status 'MPI_Status))
@@ -916,14 +916,14 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
 
 
 (defun mpi-broadcast (data &key (root 0)(comm :MPI_COMM_WORLD))
-  "Broadcasts data from the process with rank root to all processes of the group (MPI_COMM_WORLD), 
+  "Broadcasts data from the process with rank root to all processes of the group (MPI_COMM_WORLD),
    itself included. It is called by all members of group using the same arguments for comm, root. On return, the contents of root's communication buffer has been copied to all processes.
    [** This is a specialized version of the MPI standard function MPI_BCAST (see http://www.mpi-forum.org/docs/mpi-11-html/node67.html)]
 
 
    Assume: if data is basic, then at the time of the call, it is set to the same type basic object at all procs.
            if data is simple-array (or string), then the types AND ARRAY COUNTS are the same at all procs -> will write into the provided array, and return a reference to it!
-           
+
   "
   (let* ((metadata (match-type data))
 	 (base-typespec (obj-tspec-base-typespec metadata))
@@ -962,8 +962,8 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
       )))
 
 (defun mpi-broadcast-auto (data &key (root 0))
-  "Broadcasts data from root to all processors. All processors in the group should call MPI-BROADCAST-STRING 
-   
+  "Broadcasts data from root to all processors. All processors in the group should call MPI-BROADCAST-STRING
+
    Returns the value of the Broadcasted data
    *** Broadcast is NOT the same as as send! It can be useful to synchronize an environment
    All processes must prepare a buffer to receive the broadcast
@@ -987,10 +987,10 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
 	(setf (cffi:mem-aref metadata-array :int 0 ) (typespec-id (obj-tspec-base-typespec metadata)))
 	(setf (cffi:mem-aref metadata-array :int 1 ) (obj-tspec-count metadata))
 	(setf (cffi:mem-aref metadata-array :int 2 ) (obj-tspec->id metadata)))
-  
+
       (call-mpi (MPI_Bcast metadata-array 3 :MPI_INT root :MPI_COMM_WORLD))
       (tracep *trace1* t "received broadcast datatype ~a, count=~a, meta-id=~a ~%" (cffi:mem-aref metadata-array :int 0)(cffi:mem-aref metadata-array :int 1)(cffi:mem-aref metadata-array :int 2))
-      
+
       (setf typespec-id (cffi:mem-aref metadata-array :int 0)
 	    count (cffi:mem-aref metadata-array :int 1)
 	    meta-id (cffi:mem-aref metadata-array :int 2)))
@@ -1133,7 +1133,7 @@ e.g., p=4, d=10, n=3, assig
 	 (recvcount (case scatter-gather
 		      (:scatter sendcount);# of elements received by each proc
 		      (:gather  count))) ;# of elements received by root from each proc
-	 (sendbuf-count (case scatter-gather 
+	 (sendbuf-count (case scatter-gather
 			  (:scatter count)
 			  (:gather sendcount)))
 	 (recvbuf-count (case scatter-gather
@@ -1142,7 +1142,7 @@ e.g., p=4, d=10, n=3, assig
 	 )
     (assert (and metadata base-typespec meta-id))
     (assert data) ; data needs to be the same type and count at all procs. Can't pass in nil!
-    (tracep *trace1* t "Scatter/gather: lisp-type=~a, count=~a, sendcount=~a, recvcount=~a, sendbuf-count=~a, recvbuf-count=~a~%  base-type=~a ~%" 
+    (tracep *trace1* t "Scatter/gather: lisp-type=~a, count=~a, sendcount=~a, recvcount=~a, sendbuf-count=~a, recvbuf-count=~a~%  base-type=~a ~%"
 	    (obj-tspec-type metadata)  count sendcount recvcount sendbuf-count recvbuf-count base-typespec)
     (when (= +string+ meta-id)
       (cffi:with-foreign-pointer (sendbuf sendbuf-count)

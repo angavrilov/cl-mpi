@@ -4,9 +4,9 @@
   (:export load-mpi-foreign-libraries
 	   mpi-init mpi-initialized mpi-abort mpi-finalize
 	   mpi-comm-rank mpi-comm-size
-	   mpi-get-processor-name 
+	   mpi-get-processor-name
 	   mpi-wtime mpi-wtick
-	   mpi-barrier 
+	   mpi-barrier
 
 	   ;; collective communication
 	   mpi-broadcast ;medium-level interface
@@ -24,9 +24,9 @@
 	   with-mpi
 	   ;;
 	   status status-count status-source status-tag status-error make-status
-	   *trace1* ; toggle this to seee some trace info 
+	   *trace1* ; toggle this to seee some trace info
 	   MPI_ANY_SOURCE MPI_ANY_TAG
-	   *enable-mpi* 
+	   *enable-mpi*
 	   )
   )
 
@@ -38,12 +38,12 @@ These are symbols which will eventually be exported, but I don't think they are 
 	   mpi-buffer-attach mpi-buffer-detach ; for point-to-point buffered communication
 
 	   mpi-wait mpi-wait-any mpi-wait-any2 mpi-wait-all mpi-wait
-	   mpi-test mpi-test-any mpi-test-all 
+	   mpi-test mpi-test-any mpi-test-all
 	   mpi-wait-some mpi-test-some
 	   mpi-wait-some2 mpi-test-some2
-	   
+
 	   request-get-string request make-request request-mpi-request request-buf request-count ; for request structure (nonblocking receive result)
-	   mpi-receive-string-nonblocking 
+	   mpi-receive-string-nonblocking
 
 |#
 

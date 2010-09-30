@@ -21,7 +21,7 @@
 	      ((:MPI_UNSIGNED_LONG "MPI_UNSIGNED_LONG"))
 	      ((:MPI_FLOAT "MPI_FLOAT"))
 	      ((:MPI_DOUBLE "MPI_DOUBLE")))
-		   
+
 (constantenum MPI_Op
 	      ((:MPI_MAX "MPI_MAX"))
 	      ((:MPI_MIN "MPI_MIN"))
