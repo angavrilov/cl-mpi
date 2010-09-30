@@ -69,10 +69,18 @@ THE SOFTWARE.
 
 (defstruct request
   "an object which is returned by a nonblocking receive."
-  ;; the MPI request handle
+  ;; the MPI request handle (opaque)
   (mpi-request nil)
   ;; buffer which will be filled when the request is complete
   (buf nil)
   ;; # of received objects, from the status
-  (count 0 :type fixnum))
+  (count 0 :type fixnum)
+  ;; data type
+  (datatype nil))
+
+;;; Some constants and vars referred to by mpi-bindings.lisp
+
+(defconstant +default-tag+ 1 "default tag for MPI_Send and MPI_Recv")
+
+(defparameter *enable-mpi* t)
 

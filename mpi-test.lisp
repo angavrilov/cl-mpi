@@ -266,11 +266,11 @@ THE SOFTWARE.
 	   (let ((requests (loop for r from 1 below (mpi-comm-size) collect
 				 (mpi-receive-string-nonblocking r :tag 1000))))
 	     (sleep 0.5)
-	     (multiple-value-bind (flag out-index status)
+	     (multiple-value-bind (out-index status)
 		 (mpi-test-any requests)
 	       (testassert t);;???
-	       (formatp t "test-any with delay ~a result: flag= ~a, out-index=~a, status=~a~%"
-			delay flag out-index status))))
+	       (formatp t "test-any with delay ~a result: out-index=~a, status=~a~%"
+			delay out-index status))))
 	  (t
 	   (sleep delay)
 	   (mpi-send-string *test-msg1* 0 :tag 1000 :blocking t :mode  :basic)))))
@@ -281,10 +281,10 @@ THE SOFTWARE.
 	   (let ((requests (loop for r from 1 below (mpi-comm-size) collect
 				 (mpi-receive-string-nonblocking r :tag 1000))))
 	     (loop
-	      (multiple-value-bind (flag status)
+	      (multiple-value-bind (status)
 		  (mpi-test-all requests)
-		(when flag
-		  (formatp t "received ~a, ~a~%" flag status)
+		(when status
+		  (formatp t "received ~a~%" status)
 		  (return))))))
 	  (t
 	   (sleep (+ (coerce (mpi-comm-rank) 'float)(random 0.5)))
@@ -297,10 +297,10 @@ THE SOFTWARE.
 	   (let ((requests (loop for r from 1 below (mpi-comm-size) collect
 				 (mpi-receive-string-nonblocking r :tag 1000))))
 	     (loop while requests do
-		   (multiple-value-bind (flag status)
+		   (multiple-value-bind (status)
 		       (mpi-test (first requests))
-		     (when flag
-		       (formatp t "received ~a  ~a~%" flag status)
+		     (when status
+		       (formatp t "received ~a~%" status)
 		       (setf requests (rest requests)))))))
 	  (t
 	   (sleep (+ (coerce (mpi-comm-rank) 'float)(random 0.5)))

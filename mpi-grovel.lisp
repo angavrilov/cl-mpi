@@ -1,10 +1,8 @@
-;;(include "/usr/include/mpi/mpi.h")
 (include #.mpi::*mpi-header-file*)
 
 (in-package :MPI)
 
 ;;/* Communicators */
-;;typedef int MPI_Comm;
 (constantenum MPI_Comm
 	      ((:MPI_COMM_WORLD "MPI_COMM_WORLD"))
 	      ((:MPI_COMM_SELF "MPI_COMM_SELF")))
@@ -35,7 +33,9 @@
 	      ((:MPI_BXOR "MPI_BXOR"))
 	      ((:MPI_MINLOC "MPI_MINLOC"))
 	      ((:MPI_MAXLOC "MPI_MAXLOC")))
+
 (constant (MPI_SUCCESS "MPI_SUCCESS"))
+(constant (MPI_UNDEFINED "MPI_UNDEFINED"))
 (constant (MPI_ANY_TAG "MPI_ANY_TAG"))
 (constant (MPI_ANY_SOURCE "MPI_ANY_SOURCE"))
 
@@ -47,21 +47,11 @@
 
 ;; The cancelled field is new in MPI2, not in MPI1.
 ;; It seems OK to just ignore this field, since I'm not using it yet in CL-MPI.
-#+(or mpich1 mpich2)
 (cstruct MPI_Status "MPI_Status"
 	 (count "count" :type :int)
 	 ;;(cancelled "cancelled" :type :int) ;;<-- MPICH1/2 incompatibility ignore this field for now.
+	 ;;(cancelled "_cancelled" :type :int) ;;<-- OpenMPI
 	 (MPI_SOURCE "MPI_SOURCE" :type :int)
 	 (MPI_TAG "MPI_TAG" :type :int)
 	 (MPI_ERROR "MPI_ERROR" :type :int))
-
-
-#+openmpi
-(cstruct MPI_Status "MPI_Status"
-	 (count "_count" :type :int)
-	 (cancelled "_cancelled" :type :int) ;;<-- MPICH1/2 incompatibility ignore this field for now.
-	 (MPI_SOURCE "MPI_SOURCE" :type :int)
-	 (MPI_TAG "MPI_TAG" :type :int)
-	 (MPI_ERROR "MPI_ERROR" :type :int))
-
 
