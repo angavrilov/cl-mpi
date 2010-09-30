@@ -79,16 +79,7 @@ Some of the documentation strings are copied or derived from:
        (let ((,err ,mpi-api-function-call))
 	 ;;(format t "Called MPI function: ~a, err value=~a" (quote ,mpi-fun-name) ,err)
 	 (when (/= 0 ,err)
-	   (formatp t "~a failed with error code ~a" (quote ,mpi-fun-name) ,err)
-	   (break)
-	   ;;(when (mpi-initialized) (format t " on rank ~a (~a)"
-	   )))))
-
-(defstruct status
-  (count nil ) ;; will usually be a (signed-byte 32), but nil means that the count could not be computed with MPI_Get_count at the time this status object was created
-  (source 0 :type (signed-byte 32))
-  (tag 0 :type (signed-byte 32))
-  (error 0 :type (signed-byte 32)))
+           (error 'mpi-error :failed-function ',mpi-fun-name :error-code ,err))))))
 
 (defun mpi-get-count (status mpi-type)
   (cffi:with-foreign-object (count :int)
@@ -323,13 +314,6 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
 
 (defun type->index (lisp-type)
   (typespec-id (find lisp-type *lisp-cffi-mpi-conversions* :test #'(lambda (x y) (equal x (typespec-lisp-type y))))))
-
-(defstruct obj-tspec
-  "metadata for an object"
-  (type)
-  (count) ; # of base-type objects in this object
-  (base-typespec) ; the base typespec for this object
-  (converted-obj nil)) ; if converted, hold the converted representation of the object here
 
 (defun object->basetype (object)
   "Match basic typespec for object (values lisp-type bytes mpi-type cffi-type type-id object)"
@@ -697,12 +681,6 @@ All MPI programs must contain a call to MPI-INIT; this routine must be called be
 ;;;
 ;;; non-blocking communications
 ;;;
-
-(defstruct request
-  "an object which is returned by a nonblocking receive."
-  (mpi-request nil) ; the MPI request handle
-  (buf nil) ; buffer which will be filled when the request is complete
-  (count 0 :type fixnum)) ; # of received objects, from the status
 
 (defun request-get-string (req count)
   "Returns (values msg count) for the string that is stored in a request's buffer"

@@ -10,7 +10,8 @@
     :components
     ((:file "packages")
      (:file "cl-mpi-configure" :depends-on ("packages"))
+     (:file "mpi-types" :depends-on ("packages"))
      (cffi-grovel:grovel-file "mpi-grovel" :depends-on ("packages" "cl-mpi-configure"))
-     (:file "mpi-bindings" :depends-on ("packages" "mpi-grovel"))
+     (:file "mpi-bindings" :depends-on ("packages" "mpi-grovel" "mpi-types"))
      (:file "mpi" :depends-on ("packages" "mpi-bindings"))))
 
