@@ -51,6 +51,15 @@ Some of the documentation strings are copied or derived from:
   `(let ((it ,form))
      (prog1 it ,@code)))
 
+(defmacro memoize ((key &key (test '#'eql)) &body code)
+  (let ((kvar (gensym)) (hvar (gensym))
+        (res (gensym)) (found (gensym)))
+    `(let ((,kvar ,key)
+           (,hvar (load-time-value (make-hash-table :test ,test))))
+       (multiple-value-bind (,res ,found) (gethash ,kvar ,hvar)
+         (if ,found ,res
+             (setf (gethash ,kvar ,hvar) (progn ,@code)))))))
+
 (defmacro formatp (stream format-string &rest rest)
   "For debugging CL-MPI.
    Like format, but attaches 'Proc #' and wtime to the output so that it's easier to understand
@@ -74,15 +83,6 @@ Some of the documentation strings are copied or derived from:
   (let ((g-value (gensym)))
     `(when (= 0 (mpi-comm-rank))
        (formatp ,stream ,format-string ,@rest))))
-
-(defmacro call-mpi (mpi-api-function-call)
-  (let ((mpi-fun-name (first mpi-api-function-call))
-	(err (gensym)))
-    `(when *enable-mpi*
-       (let ((,err ,mpi-api-function-call))
-	 ;;(format t "Called MPI function: ~a, err value=~a" (quote ,mpi-fun-name) ,err)
-	 (when (/= 0 ,err)
-           (error 'mpi-error :failed-function ',mpi-fun-name :error-code ,err))))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;
@@ -168,30 +168,30 @@ See MPI_WTICK docs at:
 ;;;
 ;;; Metadata manipulation
 ;;;
-;;; ** This is very inefficient -- need to change implementation to something like a hash table
-;;;
 
 (defparameter *lisp-cffi-mpi-conversions*
-  '(
-    (bit 1 :MPI_CHAR :char 0)
-    ((signed-byte 8) 1 :MPI_CHAR :char 0)
-    ((unsigned-byte 8) 1 :MPI_UNSIGNED_CHAR :unsigned-char 1)
-    ((signed-byte 16) 2 :MPI_SHORT :short 2)
-    ((unsigned-byte 16) 2 :MPI_UNSIGNED_SHORT :unsigned-short 2)
-    ((signed-byte 32) 4 :MPI_INT :int 3)
-    ((unsigned-byte 32) 4 :MPI_UNSIGNED :unsigned-int 4)
-    (single-float 4 :MPI_FLOAT :float 5)
-    (double-float 8 :MPI_DOUBLE :double 6)
-    (character  1 :MPI_UNSIGNED_CHAR :unsigned-char 7)
-    (fixnum 4 :MPI_INT :int 8) ; XXX TODO What about 64-bit fixnums?
-    )
+  '(((signed-byte 8) 1 :MPI_CHAR :int8 0)
+    ((unsigned-byte 8) 1 :MPI_UNSIGNED_CHAR :uint8 1)
+    ((signed-byte 16) 2 :MPI_SHORT :int16 2)
+    ((unsigned-byte 16) 2 :MPI_UNSIGNED_SHORT :uint16 3)
+    ((signed-byte 32) 4 :MPI_INT :int32 4)
+    ((unsigned-byte 32) 4 :MPI_UNSIGNED :uint32 5)
+    ((signed-byte 64) 8 :MPI_LONG_LONG :int64 6)
+    ((unsigned-byte 64) 8 :MPI_UNSIGNED_LONG_LONG :uint64 7)
+    (single-float 4 :MPI_FLOAT :float 8)
+    (double-float 8 :MPI_DOUBLE :double 9)
+    (character 1 :MPI_UNSIGNED_CHAR :unsigned-char 10)
+    #+(or x86-64 x86_64)
+    (fixnum 8 :MPI_LONG_LONG :int64 11)
+    #-(or x86-64 x86_64)
+    (fixnum 4 :MPI_INT :int32 12))
   "basic mappings between lisp types, cffi tyes, and mpi types")
+
 (defun typespec-lisp-type (s) (first s))
 (defun typespec-size (s) (second s))
 (defun typespec-mpi-type (s) (third s))
 (defun typespec-cffi-type (s) (fourth s))
 (defun typespec-id (s) (fifth s))
-
 
 (defconstant +converted-object+ 1)
 (defconstant +simple-array+ 2)
@@ -200,102 +200,62 @@ See MPI_WTICK docs at:
 
 (defconstant +metadata-tag+ 32767)
 
+(defun get-typespec-by-type (lisp-type)
+  (memoize (lisp-type :test #'equal)
+    (find-if (lambda (type-spec)
+               (and (subtypep lisp-type (first type-spec))
+                    (subtypep (first type-spec) lisp-type)))
+             *lisp-cffi-mpi-conversions*)))
 
-(defun get-typespec (lisp-type)
-  (loop for type-spec in *lisp-cffi-mpi-conversions* do
-	(when (equal lisp-type (first type-spec))
-	  (return-from get-typespec (values (first type-spec) (second type-spec) (third type-spec) (fourth type-spec)(fifth type-spec)))))
-  (values nil nil nil nil))
+(defun get-typespec-by-subtype (lisp-type)
+  (memoize (lisp-type :test #'equal)
+    (find-if (lambda (type-spec)
+               (subtypep lisp-type (first type-spec)))
+             *lisp-cffi-mpi-conversions*)))
 
-(defun match-typespec (object)
-  "Match basic typespec for object (values lisp-type bytes mpi-type cffi-type type-id object)"
-  (loop for type-spec in *lisp-cffi-mpi-conversions* do
-	(when (typep object (first type-spec))
-	  (return-from match-typespec (values (first type-spec) (second type-spec) (third type-spec) (fourth type-spec)(fifth type-spec) object))))
-  (values nil nil nil nil nil object))
-
-
-
-(defun is-simple-array (object)
-  (let ((type (type-of object)))
-    (and (subtypep type '(simple-array * *))
-	 (> (length type) 2) ; rule out (simple-vector *)
-	 )))
-
-
-(defun is-string-type (type)
-  (subtypep type '(simple-array character *)))
-
+(defun get-typespec-by-index (lisp-type-index)
+  (memoize (lisp-type-index)
+    (find lisp-type-index *lisp-cffi-mpi-conversions* :key #'typespec-id)))
 
 (defun to-string (d)
   "Converts d to a string which can be READ"
-  (prin1-to-string d))
+  (let ((*print-readably* t))
+    (prin1-to-string d)))
 
-
-(defun obj-tspec->id (obj-tspec)
-  "Determine whether the object referred to by this metadata is a converted object, a string, a simple-array, or a base-object"
-  (cond ((obj-tspec-converted-obj obj-tspec)
-	 +converted-object+)
-	((subtypep (obj-tspec-type obj-tspec) '(simple-array character *))
-	 +string+)
-	((subtypep (obj-tspec-type obj-tspec) '(simple-array * *))
-	 +simple-array+)
-	(t
-	 +base-object+)))
-
-
-(defun find-typespec (lisp-type)
-  (find lisp-type *lisp-cffi-mpi-conversions* :test (lambda (x y) ;;(format t "x=~a, y=~a~%" x y)
-						      (subtypep x (first y)))))
+(defun vector-type-spec-p (typespec)
+  (and (consp typespec)
+       (subtypep typespec 'vector)))
 
 (defun lisp-type->mpi-type (lisp-type)
-  (typespec-mpi-type (find-typespec lisp-type)))
-;  (multiple-value-bind (lisp-type size mpi-type cffi-type id)
-;      (get-typespec lisp-type)
-;    mpi-type))
-
-
-(defun get-typespec-by-index (lisp-type-index)
-  (loop for ts in *lisp-cffi-mpi-conversions* do
-	(when (equal lisp-type-index (typespec-id ts))
-	  (return-from get-typespec-by-index (values (typespec-lisp-type ts) (typespec-size ts) (typespec-mpi-type ts) (typespec-cffi-type ts)(typespec-id ts)))))
-  (values nil nil nil nil nil))
-
-(defun type->index (lisp-type)
-  (typespec-id (find lisp-type *lisp-cffi-mpi-conversions* :test #'(lambda (x y) (equal x (typespec-lisp-type y))))))
-
-(defun object->basetype (object)
-  "Match basic typespec for object (values lisp-type bytes mpi-type cffi-type type-id object)"
-  ;;(find (type-of object) *lisp-cffi-mpi-conversions* :test #'(lambda (x y) (equal x (typespec-lisp-type y)))))
-  (find (type-of object) *lisp-cffi-mpi-conversions*
-	:test #'(lambda (x y) (subtypep x (typespec-lisp-type y)))))
-
+  (typespec-mpi-type (get-typespec-by-subtype lisp-type)))
 
 (defun match-type (object &key (enable-default-conversion t))
-  "Returns (values lisp-type lisp-base-type count mpi-type cffi-type type-id object)
+  "Converts an object to an obj-tspec structure.
    If enable-default-conversion is t, object is possibly converted (e.g., to a string)"
-  (declare (optimize (speed 0) (debug 3)))
-  (let ((base-typespec (object->basetype object)))
+  (let* ((object-type (type-of object))
+         (base-typespec (get-typespec-by-subtype object-type)))
     (cond (base-typespec
-	   (make-obj-tspec :type (type-of object) :count 1 :base-typespec base-typespec))
-	  ((stringp object) ;;??? XXX is type string or (simple-arrah character *)?
-	   (make-obj-tspec :type '(simple-array character *) :count (length object) :base-typespec (find-typespec 'character)))
-	  ((is-simple-array object)
-	   (let* ((base-type (second (type-of object)))
-		  (base-typespec (find-typespec base-type)))
-	     (assert base-typespec)
-	     (tracep *trace1* t "base-type=~a~%" base-type)
-	     (make-obj-tspec :type 'simple-array :count (length object) :base-typespec base-typespec)))
-	  ;; generic conversion to READable string for objects which are not basic and not simple-array
-	  (t ;
-	   (cond (enable-default-conversion ; convert any lisp object to a string
-		  (let ((obj-string (to-string object)))
-		    (make-obj-tspec :type '(simple-array character *) :count (length obj-string)
-				    :base-typespec (find-typespec 'character)
-				    :converted-obj obj-string)))
-		 (t
-		  (assert nil)))))))
-
+	   (make-obj-tspec :id +base-object+ :type object-type :count 1
+                           :base-typespec base-typespec))
+	  ((stringp object)
+	   (make-obj-tspec :id +string+ :type 'string :count (length object)
+                           :base-typespec (get-typespec-by-subtype 'character)))
+	  ((vectorp object)
+	   (let* ((base-type (array-element-type object))
+		  (base-typespec (get-typespec-by-type base-type)))
+             (unless base-typespec
+               (error "Unsupported array element type: ~S" base-type))
+	     (make-obj-tspec :id +simple-array+ :type 'simple-array :count (length object)
+                             :base-typespec base-typespec)))
+	  ;; generic conversion to READable string for objects which
+          ;; are not basic or specialized vectors
+	  (enable-default-conversion
+	   (let ((obj-string (to-string object)))
+             (make-obj-tspec :id +converted-object+ :type 'string :count (length obj-string)
+                             :base-typespec (get-typespec-by-subtype 'character)
+                             :converted-obj obj-string)))
+          (t
+           (error "Unsupported MPI object type: ~S" object-type)))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;
@@ -378,21 +338,18 @@ See MPI_BUFFER_ATTACH and MPI_BUFFER_DETACH docs at:
   [See related docs on blocking send (MPI_SEND) http://www.mpi-forum.org/docs/mpi-11-html/node31.html,
    communication modes at http://www.mpi-forum.org/docs/mpi-11-html/node40.html]
   "
-  (let* ((metadata (match-type data))
+  (let* ((metadata (match-type data :enable-default-conversion nil))
 	 (base-typespec (obj-tspec-base-typespec metadata))
-	 (meta-id (obj-tspec->id metadata))
+	 (meta-id (obj-tspec-id metadata))
 	 (cffi-type (typespec-cffi-type base-typespec))
 	 (mpi-type (typespec-mpi-type base-typespec))
 	 (count (obj-tspec-count metadata)))
-    (assert (and metadata base-typespec meta-id))
     (tracep *trace1* t "Send1: lisp-type=~a, count=~a, base-type=~a ~%" (obj-tspec-type metadata)  count base-typespec)
-    ;; This function will only handle strings, simple arrays, and base objects!
-    (assert (or (= meta-id +string+) (= meta-id +simple-array+)(= meta-id +base-object+)))
     (when (= +string+ meta-id)
       (cffi:with-foreign-string (cs data)
 	(mpi-send-1 cs count :MPI_CHAR  destination :tag tag :comm comm :mode mode)))
 
-    (cffi:with-foreign-object (buf (typespec-cffi-type base-typespec) (obj-tspec-count metadata))
+    (cffi:with-foreign-object (buf cffi-type count)
       (cond ((= +simple-array+ meta-id)
 	     (loop for i from 0 below count do
 		   (setf (cffi:mem-aref buf cffi-type i)(aref data i)))
@@ -410,25 +367,26 @@ See MPI_BUFFER_ATTACH and MPI_BUFFER_DETACH docs at:
   [See MPI_RECV docs at  http://www.mpi-forum.org/docs/mpi-11-html/node34.html]
   will allocate and return a new object.
   "
-  (when (is-string-type type)
+  (when (subtypep type 'string)
     (return-from mpi-receive (mpi-receive-string source :tag tag :buf-size-bytes (* 2 count))))
 
-  (let* ((base-type (if (subtypep type '(simple-array * *)) (second type) type))
-	 (base-typespec (find-typespec base-type))
+  (let* ((vector-type? (vector-type-spec-p type))
+         (base-type (if vector-type? (second type) type))
+	 (base-typespec (get-typespec-by-subtype base-type))
 	 (mpi-type (typespec-mpi-type base-typespec))
 	 (cffi-type (typespec-cffi-type base-typespec)))
     (assert base-typespec)
     (cffi:with-foreign-object (buf cffi-type count)
       (let ((status (mpi-receive-ptr buf count mpi-type source tag comm)))
         (tracep *trace1* t "received object ~a, status=~a~%" (cffi:mem-aref buf cffi-type) status)
-        (values (if (subtypep type '(simple-array * *))
+        (values (if vector-type?
                     (let ((a (make-array count :element-type base-type)))
                       (loop for i from 0 below count do (setf (aref a i) (cffi:mem-aref buf cffi-type i)))
                       a)
                     (cffi:mem-aref buf cffi-type))
                 status)))))
 
-(defun mpi-receive1 (source type count &key (tag +default-tag+)(comm :MPI_COMM_WORLD))
+(defun mpi-receive1 (source type count &key (tag +default-tag+) (comm :MPI_COMM_WORLD))
   "Smart receiver protocol -- assumes that receiver knows type of data to receive
    intended to matches call to mpi-send
    Blocking receive function.
@@ -436,13 +394,10 @@ See MPI_BUFFER_ATTACH and MPI_BUFFER_DETACH docs at:
   [See MPI_RECV docs at  http://www.mpi-forum.org/docs/mpi-11-html/node34.html]
   will allocate and return a new object.
   "
-  (let* ((base-type (cond ((is-string-type type)
-			   'character
-			  )
-			 ((subtypep type '(simple-array * *))
-			  (second type) )
-			 (t
-			  type)))
+  (declare (ignore count))
+  (let* ((base-type (cond ((subtypep type 'string)   'character)
+                          ((vector-type-spec-p type) (second type))
+                          (t                         type)))
 	 (status (mpi-probe source tag :base-type base-type))
 	 (count (status-count status)))
     (assert count)
@@ -483,7 +438,7 @@ See MPI_BUFFER_ATTACH and MPI_BUFFER_DETACH docs at:
 	     (mpi-send-1 c-str count :MPI_CHAR  destination :tag tag :comm comm :mode mode)))
 	  (t ;non-blocking
 	   ;; must return a request handle
-	   (let ((buf (cffi:foreign-alloc :char :count count)))
+	   (let ((buf (cffi:foreign-alloc :char :count (1+ count))))
              ;; need to add 1 to count (and also null-terminates the string)
              (cffi:lisp-string-to-foreign s buf (1+ count))
              (aprog1 (case mode
@@ -528,7 +483,7 @@ See MPI_BUFFER_ATTACH and MPI_BUFFER_DETACH docs at:
     (cffi:with-foreign-object (array :int 3)
       (setf (cffi:mem-aref array :int 0) (typespec-id (obj-tspec-base-typespec metadata)))
       (setf (cffi:mem-aref array :int 1) (obj-tspec-count metadata))
-      (setf (cffi:mem-aref array :int 2) (obj-tspec->id metadata))
+      (setf (cffi:mem-aref array :int 2) (obj-tspec-id metadata))
       (tracep *trace1* t "send-auto, metadata packed id=~a, count=~a, id=~a~%"
               (cffi:mem-aref array :int 0) (cffi:mem-aref array :int 1) (cffi:mem-aref array :int 2))
       (mpi-send-1 array 3 :MPI_INT destination :tag +metadata-tag+ :mode mode :comm comm))
@@ -545,7 +500,7 @@ See MPI_BUFFER_ATTACH and MPI_BUFFER_DETACH docs at:
 	  (t ; a non-converted, basic object (a base object or a simple-array of base objects)
 	   (let ((base-typespec (obj-tspec-base-typespec metadata)))
 	     (cffi:with-foreign-object (buf (typespec-cffi-type base-typespec) (obj-tspec-count metadata))
-	       (cond ((is-simple-array data)
+	       (cond ((vectorp data)
 		      (loop for i from 0 below (obj-tspec-count metadata) do
 			    (setf (cffi:mem-aref buf (typespec-cffi-type base-typespec) i)(aref data i))))
 		     (t ;a basic object
@@ -564,7 +519,7 @@ See MPI_BUFFER_ATTACH and MPI_BUFFER_DETACH docs at:
 	(meta-id nil))
     ;; First, receive metadata
     (cffi:with-foreign-object (array :int 3)
-      (let ((status (mpi-receive-ptr array 8 :MPI_INT source +metadata-tag+ comm)))
+      (let ((status (mpi-receive-ptr array 3 :MPI_INT source +metadata-tag+ comm)))
         (declare (ignore status)) ;;XXX TEMP
         (setf base-type-id (cffi:mem-aref array :int 0))
         (setf count (cffi:mem-aref array :int 1))
@@ -578,7 +533,7 @@ See MPI_BUFFER_ATTACH and MPI_BUFFER_DETACH docs at:
 	   (mpi-receive-string source :tag tag :buf-size-bytes count))
 	  (t ;either a basic object or a simple-array of basic objects
 	   (multiple-value-bind (base-lisp-type base-lisp-type-size mpi-type cffi-type)
-	       (get-typespec-by-index base-type-id)
+	       (apply #'values (get-typespec-by-index base-type-id))
 	     (declare (ignore base-lisp-type-size))
 	     (tracep *trace1* t "Receive: base-lisp-type=~a, count=~a, mpi-type=~a, cffi-type=~a~%" base-lisp-type count mpi-type cffi-type)
 	     (assert base-lisp-type)
@@ -689,9 +644,9 @@ Returns an alist of completed indexes & statuses."
            if data is simple-array (or string), then the types AND ARRAY COUNTS are the same at all procs -> will write into the provided array, and return a reference to it!
 
   "
-  (let* ((metadata (match-type data))
+  (let* ((metadata (match-type data :enable-default-conversion nil))
 	 (base-typespec (obj-tspec-base-typespec metadata))
-	 (meta-id (obj-tspec->id metadata))
+	 (meta-id (obj-tspec-id metadata))
 	 (cffi-type (typespec-cffi-type base-typespec))
 	 (mpi-type (typespec-mpi-type base-typespec))
 	 (count (obj-tspec-count metadata)))
@@ -750,7 +705,7 @@ Returns an alist of completed indexes & statuses."
 	(tracep *trace1* t "mpi-broadcast-auto: metadata=~a~%" metadata)
 	(setf (cffi:mem-aref metadata-array :int 0 ) (typespec-id (obj-tspec-base-typespec metadata)))
 	(setf (cffi:mem-aref metadata-array :int 1 ) (obj-tspec-count metadata))
-	(setf (cffi:mem-aref metadata-array :int 2 ) (obj-tspec->id metadata)))
+	(setf (cffi:mem-aref metadata-array :int 2 ) (obj-tspec-id metadata)))
 
       (mpi-broadcast-ptr metadata-array 3 :MPI_INT root :MPI_COMM_WORLD)
       (tracep *trace1* t "received broadcast datatype ~a, count=~a, meta-id=~a ~%" (cffi:mem-aref metadata-array :int 0)(cffi:mem-aref metadata-array :int 1)(cffi:mem-aref metadata-array :int 2))
@@ -772,7 +727,7 @@ Returns an alist of completed indexes & statuses."
 		 (cffi:foreign-string-to-lisp buf :count count))))
 	  ((= +simple-array+ meta-id)
 	   (multiple-value-bind (base-type base-type-bytes mpi-type cffi-type)
-	       (get-typespec-by-index typespec-id)
+               (apply #'values (get-typespec-by-index typespec-id))
 	     (declare (ignore base-type-bytes))
 	     (assert base-type)
 	     (cffi:with-foreign-object (buf cffi-type count)
@@ -784,7 +739,7 @@ Returns an alist of completed indexes & statuses."
 			   (loop for i from 0 below count collect (cffi:mem-aref buf cffi-type i))))))
 	  ((= +base-object+ meta-id)
 	   (multiple-value-bind (base-type base-type-bytes mpi-type cffi-type)
-	     (get-typespec-by-index typespec-id)
+               (apply #'values (get-typespec-by-index typespec-id))
 	     (assert base-type)
 	     (cffi:with-foreign-pointer (buf base-type-bytes)
 	       (when (= root (mpi-comm-rank))
@@ -815,37 +770,34 @@ Returns an alist of completed indexes & statuses."
 
    ** Returns a NEW object (base object or array)"
 
-  (let* ((metadata (match-type data))
+  (let* ((metadata (match-type data :enable-default-conversion nil))
 	 (base-typespec (obj-tspec-base-typespec metadata))
-	 (meta-id (obj-tspec->id metadata))
+	 (meta-id (obj-tspec-id metadata))
 	 (cffi-type (typespec-cffi-type base-typespec))
 	 (mpi-type (typespec-mpi-type base-typespec))
 	 (count (obj-tspec-count metadata)))
-    (assert (and metadata base-typespec meta-id))
-    (assert data) ; data needs to be the same type and count at all procs. Can't pass in nil!
     (tracep *trace1* t "Reduce: lisp-type=~a, count=~a, base-type=~a ~%" (obj-tspec-type metadata)  count base-typespec)
-    (assert (/= +string+ meta-id))
-    ;; This function will only handle simple arrays of base objects!
-    (assert (find (typespec-lisp-type base-typespec) '(single-float double-float fixnum (signed-byte 32))))
-    (cffi:with-foreign-objects ((sendbuf (typespec-cffi-type base-typespec) (obj-tspec-count metadata))
-				(recvbuf (typespec-cffi-type base-typespec) (obj-tspec-count metadata)))
+    (cffi:with-foreign-objects ((sendbuf cffi-type count)
+				(recvbuf cffi-type count))
       (cond ((= +simple-array+ meta-id)
 	     (loop for i from 0 below count do
 		   (setf (cffi:mem-aref sendbuf cffi-type i)(aref data i)))
 	     (if allreduce
 		 (mpi-all-reduce-ptr sendbuf recvbuf count mpi-type op comm)
 		 (mpi-reduce-ptr sendbuf recvbuf count mpi-type op root comm))
-	     (let ((newdata (make-array count :element-type (typespec-lisp-type base-typespec))))
-	       (loop for i from 0 below count do
-		     (setf (aref newdata i) (cffi:mem-aref recvbuf cffi-type i)))
-	       (return-from mpi-reduce newdata))) ; returns a new array
+             (when (or allreduce (= (mpi-comm-rank) root))
+               (let ((newdata (make-array count :element-type (typespec-lisp-type base-typespec))))
+                 (loop for i from 0 below count do
+                      (setf (aref newdata i) (cffi:mem-aref recvbuf cffi-type i)))
+                 newdata)))             ; returns a new array
 	    ((= +base-object+ meta-id)
 	     (setf (cffi:mem-aref sendbuf cffi-type) data)
 	     (if allreduce
 		 (mpi-all-reduce-ptr sendbuf recvbuf count mpi-type op comm)
 		 (mpi-reduce-ptr sendbuf recvbuf count mpi-type op root comm))
-	     (return-from mpi-reduce (cffi:mem-aref recvbuf cffi-type))))
-      )))
+	     (cffi:mem-aref recvbuf cffi-type))
+            (t
+             (error "This function can only be used on scalars and arrays."))))))
 
 (defun mpi-allreduce (data op &key (root 0) (comm :MPI_COMM_WORLD))
   "MPI_Allreduce
@@ -881,12 +833,12 @@ e.g., p=4, d=10, n=3, assig
    If this is not the case, use MPI-SCATTERV.
    The underlying MPI_Scatter function is a bit more flexible.(e.g., allows different type/count mappings between sender and receiver)"
   (assert scatter-gather) ; must specify either scatter or gather
-  (assert (is-simple-array data)) ; mpi-scatter only makes senses for simple-arrays
+  (assert (vectorp data)) ; mpi-scatter only makes senses for simple-arrays
   (when (equal scatter-gather :scatter)
     (assert (= 0 (rem (length data) (mpi-comm-size))))) ; mpi-scatter only makes sense when data is evenly divisible by # of procs.
-  (let* ((metadata (match-type data))
+  (let* ((metadata (match-type data :enable-default-conversion nil))
 	 (base-typespec (obj-tspec-base-typespec metadata))
-	 (meta-id (obj-tspec->id metadata))
+	 (meta-id (obj-tspec-id metadata))
 	 (cffi-type (typespec-cffi-type base-typespec))
 	 (mpi-type (typespec-mpi-type base-typespec))
 	 (count (obj-tspec-count metadata)) ; this is the size of 'data'
@@ -904,8 +856,6 @@ e.g., p=4, d=10, n=3, assig
 			  (:scatter recvcount)
 			  (:gather (* (mpi-comm-size) sendcount))))
 	 )
-    (assert (and metadata base-typespec meta-id))
-    (assert data) ; data needs to be the same type and count at all procs. Can't pass in nil!
     (tracep *trace1* t "Scatter/gather: lisp-type=~a, count=~a, sendcount=~a, recvcount=~a, sendbuf-count=~a, recvbuf-count=~a~%  base-type=~a ~%"
 	    (obj-tspec-type metadata)  count sendcount recvcount sendbuf-count recvbuf-count base-typespec)
     (when (= +string+ meta-id)

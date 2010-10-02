@@ -61,6 +61,9 @@ THE SOFTWARE.
 
 (defstruct obj-tspec
   "metadata for an object"
+  ;; ID code
+  (id (error "ID required"))
+  ;; lisp type
   (type)
   ;; # of base-type objects in this object
   (count)

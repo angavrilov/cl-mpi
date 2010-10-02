@@ -213,7 +213,7 @@ THE SOFTWARE.
 (defun meaningless-computation (x)
   "Let's waste some time"
   (let ((sum 0))
-    (loop for i from 0 below 100000 do
+    (loop for i from 0 below #-ecl 100000 #+ecl 1000 do
 	  (incf sum (+ i (loop for i from 0 below x summing (* x x x x)))))
     sum))
 
