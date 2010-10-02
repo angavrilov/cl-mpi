@@ -55,7 +55,9 @@ THE SOFTWARE.
   (count nil)
   (source 0 :type (signed-byte 32))
   (tag 0 :type (signed-byte 32))
-  (error 0 :type (signed-byte 32)))
+  (error 0 :type (signed-byte 32))
+  #| NOTE: The slots before this place are accessed by
+  .        ECL wrappers using hard-coded positions. |#)
 
 (defstruct obj-tspec
   "metadata for an object"
@@ -76,7 +78,9 @@ THE SOFTWARE.
   ;; # of received objects, from the status
   (count 0 :type fixnum)
   ;; data type
-  (datatype nil))
+  (datatype nil)
+  #| NOTE: The slots before this place are accessed by
+  .        ECL wrappers using hard-coded positions. |#)
 
 ;;; Some constants and vars referred to by mpi-bindings.lisp
 

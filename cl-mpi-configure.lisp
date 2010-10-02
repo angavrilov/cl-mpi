@@ -58,6 +58,8 @@
        (if mpilib (list (directory-pathname mpilib)))
        ;; Try deriving a path from mpicc name
        (mapcar (lambda (x) (merge-pathnames #P"../lib/" x)) *mpicc-name*)
+       ;; Look in LD_LIBRARY_PATH
+       (split-path (get-env-value "LD_LIBRARY_PATH" ""))
        ;; Hard-coded paths
        (list #P"/usr/lib/mpich-shmem/lib/")))))
 
@@ -87,6 +89,7 @@
                   #P"shared/libmpi.so.0"))
 
 (defun load-mpi-foreign-libraries ()
+  #-(and ecl mpicc)
   (cffi:load-foreign-library *mpi-shared-library*))
 
 (let ((path (string-downcase (namestring *mpi-shared-library*))))

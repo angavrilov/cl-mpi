@@ -7,6 +7,7 @@
 
 SBCL = /usr/local/bin/sbcl
 CMUCL = /usr/local/bin/lisp
+ECL = ecl
 
 # number of procs to 
 NUMPROCS = 2
@@ -18,6 +19,11 @@ cl-mpi-sbcl:
 test-sbcl: cl-mpi-sbcl
 	mpirun -np $(NUMPROCS) $(SBCL) --load "run-mpi-test.lisp"
 
+cl-mpi-ecl:
+	$(ECL) -eval '(pushnew :mpicc *features*)' -load "make-mpi.lisp" -eval '(quit)'
+
+test-ecl: cl-mpi-ecl
+	mpirun -np $(NUMPROCS) $(ECL) -eval '(pushnew :mpicc *features*)' -load "run-mpi-test.lisp" -eval '(quit)'
 
 cl-mpi-cmucl:
 	$(CMUCL) -load "make-mpi.lisp"
