@@ -554,7 +554,6 @@ See MPI_RECV docs at:
     (tracep *trace1* t "mpi-receive1 probed: status=~a~%" status)
     (mpi-receive source type count :tag tag :comm comm)))
 
-
 (defun mpi-send-string (str destination &key (tag +default-tag+) (mode :basic)
                         (blocking t) (comm :MPI_COMM_WORLD))
   "Send string to destination.
@@ -586,11 +585,11 @@ Communication modes at:
 	   (cffi:with-foreign-string (c-str str)
 	     (%mpi-send-1 c-str count :MPI_CHAR destination tag comm mode)))
 	  (t ;non-blocking
-	   ;; must return a request handle
+           ;; need to add 1 to count (and also null-terminates the string)
 	   (let ((buf (cffi:foreign-alloc :char :count (1+ count))))
-             ;; need to add 1 to count (and also null-terminates the string)
              (cffi:lisp-string-to-foreign str buf (1+ count))
              (aprog1 (%mpi-isend-1 buf count :MPI_CHAR destination tag comm mode)
+               (setf (request-status-cb it) #'%dealloc-request-buffer)
                (tracep *trace1* t "mpi-send-string generated request = ~a~%" it)))))))
 
 (defun mpi-receive-string (source &key (tag +default-tag+)
@@ -653,12 +652,29 @@ to set up the second receive call, which is the actual data payload."
 ;;; non-blocking communications
 ;;;
 
-(defun request-get-string (req count)
-  "Returns (values msg count) for the string that is stored in a request's buffer"
-  (let* ((buf (request-buf req))
-	 (msg (cffi:foreign-string-to-lisp buf :count count)))
-    ;;(cffi:foreign-free buf)
-    (values  msg count)))
+(defun %dealloc-request-buffer (request status)
+  "A request callback that simply deallocates its buffer."
+  (declare (ignore status))
+  (assert (request-deallocated-p request))
+  (when (request-buf request)
+    (cffi:foreign-free (request-buf request))
+    (setf (request-buf request) nil))
+  (setf (request-status-cb request) nil))
+
+(defun request-get-string (request)
+  (unless (request-deallocated-p request)
+    (mpi-wait request))
+  (assert (stringp (request-result request)))
+  (request-result request))
+
+(defun %complete-string-receive (request status)
+  "A request callback for nonblocking string receive."
+  (let ((buf (request-buf request))
+        (count (status-count status)))
+    (assert (and buf count))
+    (setf (request-result request)
+          (cffi:foreign-string-to-lisp buf :count count))
+    (%dealloc-request-buffer request status)))
 
 (defun mpi-wait-any2 (requests)
   "Returns (values received_request status requests_minus_completed_request)
@@ -707,12 +723,10 @@ Returns an alist of completed indexes & statuses."
 
 
 (defun mpi-receive-string-nonblocking (source &key (tag +default-tag+) (buf-size-bytes *mpi-string-buf-size*))
-  "receive string.
-   returns a nonblocking request object
-   INEFFICIENT - shouldn't allocate buffer every time."
-  (declare (type (unsigned-byte 32) source tag))
+  "Initiate a nonblocking string receive. Returns a nonblocking request object."
   (let ((buf (cffi:foreign-alloc :char :count buf-size-bytes)))
-    (mpi-ireceive-ptr buf buf-size-bytes :MPI_CHAR source tag :MPI_COMM_WORLD)))
+    (aprog1 (mpi-ireceive-ptr buf buf-size-bytes :MPI_CHAR source tag :MPI_COMM_WORLD)
+      (setf (request-status-cb it) #'%complete-string-receive))))
 
 (defun mpi-probe (source tag &key (base-type nil)(comm :MPI_COMM_WORLD)(blocking t))
   "Performs a (blocking or nonblocking) test for a message from a given source with given tag.

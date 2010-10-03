@@ -95,7 +95,8 @@ THE SOFTWARE.
   ;; called when a status is received for this request
   (status-cb nil)
   #| NOTE: The slots before this place are accessed by
-  .        ECL wrappers using hard-coded positions. |#)
+  .        ECL wrappers using hard-coded positions. |#
+  (result nil))
 
 ;;; Some constants and vars referred to by mpi-bindings.lisp
 

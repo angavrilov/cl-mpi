@@ -252,7 +252,7 @@ THE SOFTWARE.
 		     (mpi-wait-any2 requests)
 		     (formatp t "Non-blocking receive request ~a completed with status ~a~%"
 			      completed-request status)
-		     (let ((msg (request-get-string completed-request (status-count status))))
+		     (let ((msg (request-get-string completed-request)))
 		       (formatp t "msg= ~a~%" msg)
 		       (testassert (string-equal msg *test-msg1*)))
 		     (setf requests remaining-requests)))))
@@ -327,7 +327,7 @@ THE SOFTWARE.
 			     (:test completed-requests))
 		       (formatp t "Completed receives:~%~a~%remaining=~a~%" completed-requests remaining-requests)
 		       (loop for req in completed-requests do
-			     (let ((msg (request-get-string (car req) (status-count (cdr req)))))
+			     (let ((msg (request-get-string (car req))))
 			       (formatp t "msg= ~a~%" msg)
 			       (testassert (string-equal msg *test-msg1*))))
 		       (setf requests remaining-requests))))))
@@ -363,7 +363,7 @@ THE SOFTWARE.
 	     (let ((status (mpi-wait req))
 		   (*print-pretty* nil))
 	       (formatp t "receive-nonblocking status = ~a~%" status)
-	       (let ((msg (request-get-string req (status-count status))))
+	       (let ((msg (request-get-string req)))
 		 (formatp t "Nonblocking receive received ~a" msg)
 		 (testassert (string-equal msg *test-msg1*))
 		 )))))))
