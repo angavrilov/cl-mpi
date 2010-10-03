@@ -103,10 +103,10 @@ THE SOFTWARE.
                              (setf (aref ,param i) ,form))))))
              (case type
                (MPI_Status
-                `(MPI_Status->mpi-status ,tsym ,default))
+                `(%MPI_Status->mpi-status/rq ,tsym ,@default))
                (MPI_Status/seq
-                (wrap-seq `(MPI_Status->mpi-status
-                            (cffi:mem-aref ,tsym 'MPI_Status i) ,default)))
+                (wrap-seq `(%MPI_Status->mpi-status/rq
+                            (cffi:mem-aref ,tsym 'MPI_Status i) ,@default)))
                (int/seq
                 (wrap-seq `(cffi:mem-aref ,tsym :int i)))
                (MPI_Request
@@ -140,13 +140,6 @@ THE SOFTWARE.
            ,documentation
            ,body)))))
 
-(defmacro %index-request-datatype (requests index &optional index2)
-  (let ((iexpr (if index2 `(elt ,index ,index2) index)))
-    (if (eq (or index2 index) 'i)
-        `(request-datatype (elt ,requests ,iexpr))
-        `(unless (= ,index MPI_UNDEFINED)
-           (request-datatype (elt ,requests ,iexpr))))))
-
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;
 ;;; Interface between foreign and lisp objects
@@ -169,6 +162,26 @@ THE SOFTWARE.
                :source (cffi:foreign-slot-value status 'MPI_Status 'MPI_SOURCE)
                :tag (cffi:foreign-slot-value status 'MPI_Status 'MPI_TAG)
                :error (cffi:foreign-slot-value status 'MPI_Status 'MPI_ERROR)))
+
+(defmacro %MPI_Status->mpi-status/rq (status mode type-or-rq &rest indexes)
+  "A helper for define-api-call: parses the args for MPI_Status and calls request-status-cb."
+  (ecase mode
+    (:type
+     (assert (null indexes))
+     `(MPI_Status->mpi-status ,status ,type-or-rq))
+    (:request
+     (let* ((eseq (if indexes
+                      (reduce (lambda (a b) `(elt ,a ,b)) (list* type-or-rq indexes) :from-end t)
+                      type-or-rq))
+            (body `(let* ((%rq ,eseq)
+                          (%status (MPI_Status->mpi-status ,status (request-datatype %rq))))
+                     (when (request-status-cb %rq)
+                       (funcall (request-status-cb %rq) %rq %status))
+                     %status))
+            (last-index (car (last indexes))))
+       (if (or (null indexes) (eq last-index 'i))
+           body
+           `(unless (= ,last-index MPI_UNDEFINED) ,body))))))
 
 ;; Request
 

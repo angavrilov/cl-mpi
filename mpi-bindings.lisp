@@ -125,10 +125,10 @@ Special parameter names:
 
 Special type handling:
 
-  MPI_Status  -  Output only; a lisp status structure is
+  MPI_Status -  Output only; a lisp status structure is
                 allocated and returned.
-                The default value must be an expression
-                that returns the operation datatype.
+                The default value must specify how to get
+                the operation datatype.
   MPI_Request - In output mode, a structure is allocated
                 and returned. The default value is a parameter
                 list of (buffer count datatype).
@@ -251,7 +251,7 @@ See MPI_BARRIER docs at:
      (source :int)
      (tag :int :in +default-tag+)
      (comm MPI_Comm :in :MPI_COMM_WORLD)
-     (status MPI_Status :out datatype)))
+     (status MPI_Status :out (:type datatype))))
 
 (define-api-call (mpi-send-ptr/basic "MPI_Send")
     ((buf :pointer)
@@ -299,14 +299,14 @@ See MPI_BARRIER docs at:
      (recv-buf :pointer) (recv-count :int) (recv-datatype MPI_Datatype)
      (source :int) (recv-tag :int)
      (comm MPI_Comm :in :MPI_COMM_WORLD)
-     (status MPI_Status :out recv-datatype)))
+     (status MPI_Status :out (:type recv-datatype))))
 
 (define-api-call (%mpi-probe "MPI_Probe")
     ((datatype MPI_Datatype :skip)
      (source :int)
      (tag :int :in +default-tag+)
      (comm MPI_Comm :in :MPI_COMM_WORLD)
-     (status MPI_Status :out datatype)))
+     (status MPI_Status :out (:type datatype))))
 
 ;; Non-Blocking communications (send)
 
@@ -338,20 +338,20 @@ See MPI_BARRIER docs at:
 
 (define-api-call (mpi-wait "MPI_Wait")
     ((request MPI_Request :mutate)
-     (status MPI_Status :out (request-datatype request)))
+     (status MPI_Status :out (:request request)))
   "Block until the request completes.")
 
 (define-api-call (mpi-wait-all "MPI_Waitall")
     ((seq/count :int :aux (length requests))
      (requests MPI_Request/seq :mutate)
-     (statuses MPI_Status/seq :out (%index-request-datatype requests i)))
+     (statuses MPI_Status/seq :out (:request requests i)))
   "Block until all requests complete. Returns an array of matching statuses.")
 
 (define-api-call (mpi-wait-any "MPI_Waitany")
     ((seq/count :int :aux (length requests))
      (requests MPI_Request/seq :mutate)
      (completed-index :int :out)
-     (status MPI_Status :out (%index-request-datatype requests completed-index)))
+     (status MPI_Status :out (:request requests completed-index)))
   "Blocks until one of the requests completes. Returns (values index status)")
 
 (define-api-call (%mpi-wait-some "MPI_Waitsome")
@@ -359,19 +359,19 @@ See MPI_BARRIER docs at:
      (requests MPI_Request/seq :mutate)
      (out/count :int :out)
      (completed-indices int/seq :out)
-     (statuses MPI_Status/seq :out (%index-request-datatype requests completed-indices i))))
+     (statuses MPI_Status/seq :out (:request requests completed-indices i))))
 
 (define-api-call (mpi-test "MPI_Test")
     ((request MPI_Request :mutate)
      (flag :boolean :abort-flag)
-     (status MPI_Status :out (request-datatype request)))
+     (status MPI_Status :out (:request request)))
   "Checks whether the request completed. If yes, returns the status.")
 
 (define-api-call (mpi-test-all "MPI_Testall")
     ((seq/count :int :aux (length requests))
      (requests MPI_Request/seq :mutate)
      (flag :boolean :abort-flag)
-     (status MPI_Status/seq :out (%index-request-datatype requests i)))
+     (status MPI_Status/seq :out (:request requests i)))
   "Checks if all requests have completed. If yes, returns an array of statuses.")
 
 (define-api-call (mpi-test-any "MPI_Testany")
@@ -379,7 +379,7 @@ See MPI_BARRIER docs at:
      (requests MPI_Request/seq :mutate)
      (completed-index :int :out)
      (flag :boolean :abort-flag)
-     (status MPI_Status :out (%index-request-datatype requests completed-index)))
+     (status MPI_Status :out (:request requests completed-index)))
   "Checks if any of the requests has completed. If yes, returns the index and status.")
 
 (define-api-call (%mpi-test-some "MPI_Testsome")
@@ -387,7 +387,7 @@ See MPI_BARRIER docs at:
      (requests MPI_Request/seq :mutate)
      (out/count :int :out)
      (completed-indices int/seq :out)
-     (statuses MPI_Status/seq :out (%index-request-datatype requests completed-indices i)))
+     (statuses MPI_Status/seq :out (:request requests completed-indices i)))
   "Checks if some of the requests have completed. Returns total count, statuses & indexes.")
 
 ;; Non-Blocking communications (probe)
@@ -398,7 +398,7 @@ See MPI_BARRIER docs at:
      (tag :int :in +default-tag+)
      (comm MPI_Comm :in :MPI_COMM_WORLD)
      (flag :boolean :abort-flag)
-     (status MPI_Status :out datatype)))
+     (status MPI_Status :out (:type datatype))))
 
 (define-api-call (mpi-ireceive-ptr "MPI_Irecv")
     ((buf :pointer) (count :int) (datatype MPI_Datatype) (source :int)

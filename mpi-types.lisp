@@ -92,6 +92,8 @@ THE SOFTWARE.
   (count 0 :type fixnum)
   ;; data type
   (datatype nil)
+  ;; called when a status is received for this request
+  (status-cb nil)
   #| NOTE: The slots before this place are accessed by
   .        ECL wrappers using hard-coded positions. |#)
 

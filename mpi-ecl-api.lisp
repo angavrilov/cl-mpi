@@ -148,9 +148,9 @@ THE SOFTWARE.
                                       (apply #'%emit/MPI_Request->mpi-request
                                              out in #'get-c-parameter default))
                                      ((MPI_Status MPI_Status/seq)
-                                      (funcall #'%emit/MPI_Status->mpi-status
-                                               out in #'get-c-parameter
-                                               parameter-temporaries default))
+                                      (apply #'%emit/MPI_Status->mpi-status
+                                             out in #'get-c-parameter
+                                             parameter-temporaries default))
                                      ((int/seq)
                                       (format nil "~A = ecl_make_int(~A);" out in))
                                      (t
@@ -256,50 +256,41 @@ THE SOFTWARE.
 
 (defparameter %mpi-status-template% (make-status))
 
-(defun %emit/MPI_Status->mpi-status (out status-ref arg-cb temp-alist &optional mpi-type)
+(defun %emit/MPI_Status->mpi-status (out status-ref arg-cb temp-alist mode rq-or-type &rest indexes)
   (with-output-to-string (str)
-    (format str "{ cl_object type_tmp,tmp = cl_copy_structure((@%mpi-status-template%)->symbol.value);~%")
-    (when mpi-type
-      (format str "    int type, count = 0;~%")
-      (cond ((symbolp mpi-type)
-             (let ((name (cdr (assoc mpi-type temp-alist))))
-               (assert (stringp name))
-               (format str "    type = ~A;~%" name)))
-            ;; (request-datatype arg-name)
-            ((and (consp mpi-type)
-                  (eq (first mpi-type) 'request-datatype)
-                  (symbolp (second mpi-type)))
-             (format str "    type_tmp = SLOT(~A,3);~%" (funcall arg-cb (second mpi-type) :object))
-             (format str "    if (type_tmp == Cnil) goto skip_type;~%")
-             (format str "  ~A~%" (funcall (get 'MPI_Datatype 'emit-parser) "type" "type_tmp")))
-            ;; (%index-request-datatype rq-arg-name index)
-            ;; (%index-request-datatype rq-arg-name cross-index index)
-            ((and (consp mpi-type)
-                  (eq (first mpi-type) '%index-request-datatype))
-             (let* ((rq-arg (funcall arg-cb (second mpi-type) :object))
-                    (idx-arg (car (last mpi-type)))
-                    (idx-string
-                     (if (eq idx-arg 'i) "i"
-                         (let ((var (cdr (assoc idx-arg temp-alist))))
-                           (assert (stringp var))
-                           (format str "    if (~A == MPI_UNDEFINED) goto skip_type;~%" var)
-                           var))))
-               (when (= (length mpi-type) 4)
-                 (let ((ridx-var (cdr (assoc (third mpi-type) temp-alist))))
-                   (assert (stringp ridx-var))
-                   (setf idx-string (format nil "~A[~A]" ridx-var idx-string))))
-               (format str "    type_tmp = SLOT(ecl_elt(~A,~A),3);~%" rq-arg idx-string)
-               (format str "    if (type_tmp == Cnil) goto skip_type;~%")
-               (format str "  ~A~%" (funcall (get 'MPI_Datatype 'emit-parser) "type" "type_tmp"))))
-            (t
-             (error "Unknown type descriptor: ~S" mpi-type)))
-      (%emit-mpi-call str '%mpi-get-count "MPI_Get_count"
-                      (list (format nil "&~A" status-ref) "type" "&count"))
-      (format str "    SLOT(tmp,0) = ecl_make_int(count);~%skip_type:~%"))
+    (format str "{ cl_object type_tmp, rq_tmp, tmp = Cnil;")
+    (format str "    int type, idx, count = -1;~%")
+    (ecase mode
+      (:type
+       (let ((name (cdr (assoc rq-or-type temp-alist))))
+         (assert (stringp name))
+         (format str "    type = ~A;~%" name)))
+      (:request
+       (let* ((rindexes (reverse indexes)))
+         (format str "    rq_tmp = ~A;~%" (funcall arg-cb rq-or-type :object))
+         (when indexes
+           (if (eq (first rindexes) 'i)
+               (format str "    idx = i;~%")
+               (format str "    if ((idx = ~A) == MPI_UNDEFINED) goto skip_status;~%"
+                       (cdr (assoc (first rindexes) temp-alist))))
+           (loop for rtable-name in (rest rindexes)
+              do (format str "    idx = ~A[idx];~%"
+                         (cdr (assoc rtable-name temp-alist))))
+           (format str "    rq_tmp = ecl_elt(rq_tmp,idx);~%"))
+         (format str "    type_tmp = SLOT(rq_tmp,3);~%")
+         (format str "    if (type_tmp == Cnil) goto skip_type;~%")
+         (format str "  ~A~%" (funcall (get 'MPI_Datatype 'emit-parser) "type" "type_tmp")))))
+    (%emit-mpi-call str '%mpi-get-count "MPI_Get_count"
+                    (list (format nil "&~A" status-ref) "type" "&count"))
+    (format str "skip_type:~%")
+    (format str "    tmp = cl_copy_structure((@%mpi-status-template%)->symbol.value);~%")
+    (format str "    SLOT(tmp,0) = (count < 0) ? Cnil : ecl_make_int(count);~%")
     (format str "    SLOT(tmp,1) = ecl_make_int(~A.MPI_SOURCE);~%" status-ref)
     (format str "    SLOT(tmp,2) = ecl_make_int(~A.MPI_TAG);~%" status-ref)
     (format str "    SLOT(tmp,3) = ecl_make_int(~A.MPI_ERROR);~%" status-ref)
-    (format str "    ~A = tmp;~%" out)
+    (when (eq mode :request)
+      (format str "    if (SLOT(rq_tmp,4) != Cnil) cl_funcall(3,SLOT(rq_tmp,4),rq_tmp,tmp);~%"))
+    (format str "skip_status:~%    ~A = tmp;~%" out)
     (format str "  }")))
 
 ;; Request
