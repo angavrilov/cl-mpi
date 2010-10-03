@@ -803,9 +803,8 @@ INEFFICIENT - first broadcasts metadata, then the actual payload."
          (metadata (if root? init-metadata new-metadata)))
     (%mpi-broadcast-meta data metadata root comm (1+ (obj-tspec-count metadata)))))
 
-(defun mpi-reduce (data op &key (root 0) (comm :MPI_COMM_WORLD)(allreduce nil))
+(defun mpi-reduce (data op &key (root 0) (comm :MPI_COMM_WORLD) (allreduce nil) into-array)
   "Calls MPI_Reduce with operator op on obj, which is count instances of datatype.
-
    [from https://computing.llnl.gov/tutorials/mpi/man/MPI_Reduce.txt]
    Applies a reduction operation to the vector sendbuf over
    the set of tasks specified by comm and places the result in recvbuf on root.
@@ -825,37 +824,44 @@ INEFFICIENT - first broadcasts metadata, then the actual payload."
 
   (let* ((metadata (match-type data :enable-default-conversion nil))
 	 (base-typespec (obj-tspec-base-typespec metadata))
-	 (meta-id (obj-tspec-id metadata))
-	 (cffi-type (typespec-cffi-type base-typespec))
+         (cffi-type (typespec-cffi-type base-typespec))
 	 (mpi-type (typespec-mpi-type base-typespec))
-	 (count (obj-tspec-count metadata)))
-    (tracep *trace1* t "Reduce: lisp-type=~a, count=~a, base-type=~a ~%" (obj-tspec-type metadata)  count base-typespec)
-    (cffi:with-foreign-objects ((sendbuf cffi-type count)
-				(recvbuf cffi-type count))
-      (cond ((= +simple-array+ meta-id)
-	     (loop for i from 0 below count
-                do (setf (cffi:mem-aref sendbuf cffi-type i) (row-major-aref data i)))
-	     (if allreduce
-		 (mpi-all-reduce-ptr sendbuf recvbuf count mpi-type op comm)
-		 (mpi-reduce-ptr sendbuf recvbuf count mpi-type op root comm))
-             (when (or allreduce (= (mpi-comm-rank) root))
-               (let ((newdata (make-array count :element-type (typespec-lisp-type base-typespec))))
-                 (loop for i from 0 below count
-                    do (setf (row-major-aref newdata i) (cffi:mem-aref recvbuf cffi-type i)))
-                 newdata)))             ; returns a new array
-	    ((= +base-object+ meta-id)
-	     (setf (cffi:mem-aref sendbuf cffi-type) data)
-	     (if allreduce
-		 (mpi-all-reduce-ptr sendbuf recvbuf count mpi-type op comm)
-		 (mpi-reduce-ptr sendbuf recvbuf count mpi-type op root comm))
-	     (cffi:mem-aref recvbuf cffi-type))
-            (t
-             (error "This function can only be used on scalars and arrays."))))))
+	 (meta-id (obj-tspec-id metadata))
+	 (count (obj-tspec-count metadata))
+         (return? (or allreduce (= root (mpi-comm-rank)))))
+    (tracep *trace1* t "Reduce: ~a~%" metadata)
+    (cond ((= +simple-array+ meta-id)
+           (with-array-data-access (src-ptr data base-typespec count :handle-unsafe t)
+             (if return?
+                 (let* ((elt-type (typespec-lisp-type base-typespec))
+                        (out-array (or into-array (make-array (array-dimensions data)
+                                                              :element-type elt-type))))
+                   (when into-array
+                     (assert (and (= (array-total-size out-array) count)
+                                  (equal (array-element-type out-array) elt-type)
+                                  (not (eq data out-array)))))
+                   (with-array-data-access (out-ptr out-array base-typespec count
+                                                    :in nil :out t :handle-unsafe t)
+                     (if allreduce
+                         (mpi-all-reduce-ptr src-ptr out-ptr count mpi-type op comm)
+                         (mpi-reduce-ptr src-ptr out-ptr count mpi-type op root comm)))
+                   out-array)
+                 (cffi:with-foreign-object (out-ptr cffi-type count)
+                   (mpi-reduce-ptr src-ptr out-ptr count mpi-type op root comm)))))
+          ((= +base-object+ meta-id)
+           (with-scalar-data-copy (src-ptr src-value base-typespec :init-with data)
+             (with-scalar-data-copy (out-ptr out-value base-typespec)
+               (if allreduce
+                   (mpi-all-reduce-ptr src-ptr out-ptr 1 mpi-type op comm)
+                   (mpi-reduce-ptr src-ptr out-ptr 1 mpi-type op root comm))
+               (when return? out-value))))
+          (t
+           (error "This function can only be used with scalars and arrays.")))))
 
-(defun mpi-allreduce (data op &key (root 0) (comm :MPI_COMM_WORLD))
+(defun mpi-allreduce (data op &key (root 0) (comm :MPI_COMM_WORLD) into-array)
   "MPI_Allreduce
    Like mpi-reduce, except that the result of the reduction is sent to all processors, and not just the root"
-  (mpi-reduce data op :root root :comm comm :allreduce t))
+  (mpi-reduce data op :root root :comm comm :allreduce t :into-array into-array))
 
 
 
