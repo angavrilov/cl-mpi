@@ -222,9 +222,9 @@ See MPI_WTICK docs at:
   (let ((*print-readably* t))
     (prin1-to-string d)))
 
-(defun vector-type-spec-p (typespec)
+(defun array-type-spec-p (typespec)
   (and (consp typespec)
-       (subtypep typespec 'vector)))
+       (subtypep typespec 'array)))
 
 (defun lisp-type->mpi-type (lisp-type)
   (typespec-mpi-type (get-typespec-by-subtype lisp-type)))
@@ -240,15 +240,15 @@ See MPI_WTICK docs at:
 	  ((stringp object)
 	   (make-obj-tspec :id +string+ :type 'string :count (length object)
                            :base-typespec (get-typespec-by-subtype 'character)))
-	  ((vectorp object)
+	  ((arrayp object)
 	   (let* ((base-type (array-element-type object))
 		  (base-typespec (get-typespec-by-type base-type)))
              (unless base-typespec
                (error "Unsupported array element type: ~S" base-type))
-	     (make-obj-tspec :id +simple-array+ :type 'simple-array :count (length object)
+	     (make-obj-tspec :id +simple-array+ :type 'simple-array :count (array-total-size object)
                              :base-typespec base-typespec)))
 	  ;; generic conversion to READable string for objects which
-          ;; are not basic or specialized vectors
+          ;; are not basic or specialized arrays
 	  (enable-default-conversion
 	   (let ((obj-string (to-string object)))
              (make-obj-tspec :id +converted-object+ :type 'string :count (length obj-string)
@@ -351,8 +351,8 @@ See MPI_BUFFER_ATTACH and MPI_BUFFER_DETACH docs at:
 
     (cffi:with-foreign-object (buf cffi-type count)
       (cond ((= +simple-array+ meta-id)
-	     (loop for i from 0 below count do
-		   (setf (cffi:mem-aref buf cffi-type i)(aref data i)))
+	     (loop for i from 0 below count
+                do (setf (cffi:mem-aref buf cffi-type i) (row-major-aref data i)))
 	     (mpi-send-1 buf count mpi-type destination :tag tag :comm comm :mode mode))
 	    ((= +base-object+ meta-id)
 	     (setf (cffi:mem-aref buf cffi-type) data)
@@ -370,8 +370,8 @@ See MPI_BUFFER_ATTACH and MPI_BUFFER_DETACH docs at:
   (when (subtypep type 'string)
     (return-from mpi-receive (mpi-receive-string source :tag tag :buf-size-bytes (* 2 count))))
 
-  (let* ((vector-type? (vector-type-spec-p type))
-         (base-type (if vector-type? (second type) type))
+  (let* ((array-type? (array-type-spec-p type))
+         (base-type (if array-type? (second type) type))
 	 (base-typespec (get-typespec-by-subtype base-type))
 	 (mpi-type (typespec-mpi-type base-typespec))
 	 (cffi-type (typespec-cffi-type base-typespec)))
@@ -379,9 +379,10 @@ See MPI_BUFFER_ATTACH and MPI_BUFFER_DETACH docs at:
     (cffi:with-foreign-object (buf cffi-type count)
       (let ((status (mpi-receive-ptr buf count mpi-type source tag comm)))
         (tracep *trace1* t "received object ~a, status=~a~%" (cffi:mem-aref buf cffi-type) status)
-        (values (if vector-type?
+        (values (if array-type?
                     (let ((a (make-array count :element-type base-type)))
-                      (loop for i from 0 below count do (setf (aref a i) (cffi:mem-aref buf cffi-type i)))
+                      (loop for i from 0 below count
+                         do (setf (row-major-aref a i) (cffi:mem-aref buf cffi-type i)))
                       a)
                     (cffi:mem-aref buf cffi-type))
                 status)))))
@@ -396,7 +397,7 @@ See MPI_BUFFER_ATTACH and MPI_BUFFER_DETACH docs at:
   "
   (declare (ignore count))
   (let* ((base-type (cond ((subtypep type 'string)   'character)
-                          ((vector-type-spec-p type) (second type))
+                          ((array-type-spec-p type)  (second type))
                           (t                         type)))
 	 (status (mpi-probe source tag :base-type base-type))
 	 (count (status-count status)))
@@ -500,9 +501,10 @@ See MPI_BUFFER_ATTACH and MPI_BUFFER_DETACH docs at:
 	  (t ; a non-converted, basic object (a base object or a simple-array of base objects)
 	   (let ((base-typespec (obj-tspec-base-typespec metadata)))
 	     (cffi:with-foreign-object (buf (typespec-cffi-type base-typespec) (obj-tspec-count metadata))
-	       (cond ((vectorp data)
-		      (loop for i from 0 below (obj-tspec-count metadata) do
-			    (setf (cffi:mem-aref buf (typespec-cffi-type base-typespec) i)(aref data i))))
+	       (cond ((arrayp data)
+		      (loop for i from 0 below (obj-tspec-count metadata)
+                         do (setf (cffi:mem-aref buf (typespec-cffi-type base-typespec) i)
+                                  (row-major-aref data i))))
 		     (t ;a basic object
 		      (setf (cffi:mem-aref buf (typespec-cffi-type base-typespec)) data)))
 	       (mpi-send-1 buf (obj-tspec-count metadata) (typespec-mpi-type base-typespec) destination
@@ -667,11 +669,11 @@ Returns an alist of completed indexes & statuses."
 
     (cffi:with-foreign-object (buf (typespec-cffi-type base-typespec) (obj-tspec-count metadata))
       (cond ((= +simple-array+ meta-id)
-	     (loop for i from 0 below count do
-                  (setf (cffi:mem-aref buf cffi-type i)(aref data i)))
+	     (loop for i from 0 below count
+                do (setf (cffi:mem-aref buf cffi-type i) (row-major-aref data i)))
 	     (mpi-broadcast-ptr buf count mpi-type  root comm)
-	     (loop for i from 0 below count do
-                  (setf (aref data i) (cffi:mem-aref buf cffi-type i)))
+	     (loop for i from 0 below count
+                do (setf (row-major-aref data i) (cffi:mem-aref buf cffi-type i)))
 	     (return-from mpi-broadcast data) ; overwrites and returns the input array
 	     )
 	    ((= +base-object+ meta-id)
@@ -733,7 +735,7 @@ Returns an alist of completed indexes & statuses."
 	     (cffi:with-foreign-object (buf cffi-type count)
 	       (when (= root (mpi-comm-rank))
 		 (loop for i from 0 below count do
-                      (setf (cffi:mem-aref buf cffi-type i)(aref data i))))
+                      (setf (cffi:mem-aref buf cffi-type i) (row-major-aref data i))))
 	       (mpi-broadcast-ptr buf count mpi-type root :MPI_COMM_WORLD)
 	       (make-array count :element-type base-type :initial-contents
 			   (loop for i from 0 below count collect (cffi:mem-aref buf cffi-type i))))))
@@ -780,15 +782,15 @@ Returns an alist of completed indexes & statuses."
     (cffi:with-foreign-objects ((sendbuf cffi-type count)
 				(recvbuf cffi-type count))
       (cond ((= +simple-array+ meta-id)
-	     (loop for i from 0 below count do
-		   (setf (cffi:mem-aref sendbuf cffi-type i)(aref data i)))
+	     (loop for i from 0 below count
+                do (setf (cffi:mem-aref sendbuf cffi-type i) (row-major-aref data i)))
 	     (if allreduce
 		 (mpi-all-reduce-ptr sendbuf recvbuf count mpi-type op comm)
 		 (mpi-reduce-ptr sendbuf recvbuf count mpi-type op root comm))
              (when (or allreduce (= (mpi-comm-rank) root))
                (let ((newdata (make-array count :element-type (typespec-lisp-type base-typespec))))
-                 (loop for i from 0 below count do
-                      (setf (aref newdata i) (cffi:mem-aref recvbuf cffi-type i)))
+                 (loop for i from 0 below count
+                    do (setf (row-major-aref newdata i) (cffi:mem-aref recvbuf cffi-type i)))
                  newdata)))             ; returns a new array
 	    ((= +base-object+ meta-id)
 	     (setf (cffi:mem-aref sendbuf cffi-type) data)
@@ -833,7 +835,7 @@ e.g., p=4, d=10, n=3, assig
    If this is not the case, use MPI-SCATTERV.
    The underlying MPI_Scatter function is a bit more flexible.(e.g., allows different type/count mappings between sender and receiver)"
   (assert scatter-gather) ; must specify either scatter or gather
-  (assert (vectorp data)) ; mpi-scatter only makes senses for simple-arrays
+  (assert (arrayp data)) ; mpi-scatter only makes senses for simple-arrays
   (when (equal scatter-gather :scatter)
     (assert (= 0 (rem (length data) (mpi-comm-size))))) ; mpi-scatter only makes sense when data is evenly divisible by # of procs.
   (let* ((metadata (match-type data :enable-default-conversion nil))
@@ -873,8 +875,8 @@ e.g., p=4, d=10, n=3, assig
 
     (cffi:with-foreign-objects  ((sendbuf (typespec-cffi-type base-typespec) sendbuf-count)
 				 (recvbuf (typespec-cffi-type base-typespec) recvbuf-count))
-      (loop for i from 0 below sendbuf-count do
-	    (setf (cffi:mem-aref sendbuf cffi-type i)(aref data i)))
+      (loop for i from 0 below sendbuf-count
+         do (setf (cffi:mem-aref sendbuf cffi-type i) (row-major-aref data i)))
       (case scatter-gather
 	(:scatter (mpi-scatter-ptr sendbuf sendcount mpi-type recvbuf recvcount mpi-type root comm))
 	(:gather (if all
