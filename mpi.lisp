@@ -170,7 +170,7 @@ See MPI_WTICK docs at:
 ;;;
 
 (defparameter *lisp-cffi-mpi-conversions*
-  (loop for (lisp-type size mpi-type cffi-type id)
+  (loop for (lisp-type size mpi-type cffi-type id unsafe-p)
      in '(((signed-byte 8) 1 :MPI_CHAR :int8)
           ((unsigned-byte 8) 1 :MPI_UNSIGNED_CHAR :uint8)
           ((signed-byte 16) 2 :MPI_SHORT :int16)
@@ -181,17 +181,18 @@ See MPI_WTICK docs at:
           ((unsigned-byte 64) 8 :MPI_UNSIGNED_LONG_LONG :uint64)
           (single-float 4 :MPI_FLOAT :float)
           (double-float 8 :MPI_DOUBLE :double)
-          (character 1 :MPI_UNSIGNED_CHAR :unsigned-char)
+          (character 1 :MPI_UNSIGNED_CHAR :unsigned-char nil t)
           #+(or x86-64 x86_64)
-          (fixnum 8 :MPI_LONG_LONG :int64 100)
+          (fixnum 8 :MPI_LONG_LONG :int64 100 t)
           #-(or x86-64 x86_64)
-          (fixnum 4 :MPI_INT :int32 101))
+          (fixnum 4 :MPI_INT :int32 101 t))
      and def-id from 0
      collect (make-typespec :lisp-type lisp-type
                             :size size
                             :mpi-type mpi-type
                             :cffi-type cffi-type
-                            :id (or id def-id)))
+                            :id (or id def-id)
+                            :unsafe-p unsafe-p))
   "basic mappings between lisp types, cffi tyes, and mpi types")
 
 (defun explode-typespec (s)
@@ -224,7 +225,8 @@ See MPI_WTICK docs at:
 
 (defun get-typespec-by-index (lisp-type-index)
   (memoize (lisp-type-index)
-    (find lisp-type-index *lisp-cffi-mpi-conversions* :key #'typespec-id)))
+    (or (find lisp-type-index *lisp-cffi-mpi-conversions* :key #'typespec-id)
+        (error "Invalid typespec ID: ~A" lisp-type-index))))
 
 (defun to-string (d)
   "Converts d to a string which can be READ"
@@ -235,8 +237,16 @@ See MPI_WTICK docs at:
   (and (consp typespec)
        (subtypep typespec 'array)))
 
+(defun get-scalar-typespec (lisp-type)
+  (or (get-typespec-by-subtype lisp-type)
+      (error "Unsupported lisp type: ~S" lisp-type)))
+
 (defun lisp-type->mpi-type (lisp-type)
-  (typespec-mpi-type (get-typespec-by-subtype lisp-type)))
+  (typespec-mpi-type (get-scalar-typespec lisp-type)))
+
+(defun get-array-elt-typespec (base-type)
+  (or (get-typespec-by-type base-type)
+      (error "Unsupported array element type: ~S" base-type)))
 
 (defun match-type (object &key (enable-default-conversion t))
   "Converts an object to an obj-tspec structure.
@@ -251,9 +261,7 @@ See MPI_WTICK docs at:
                            :base-typespec (get-typespec-by-subtype 'character)))
 	  ((arrayp object)
 	   (let* ((base-type (array-element-type object))
-		  (base-typespec (get-typespec-by-type base-type)))
-             (unless base-typespec
-               (error "Unsupported array element type: ~S" base-type))
+		  (base-typespec (get-array-elt-typespec base-type)))
 	     (make-obj-tspec :id +simple-array+ :type 'simple-array :count (array-total-size object)
                              :base-typespec base-typespec)))
 	  ;; generic conversion to READable string for objects which
@@ -266,11 +274,122 @@ See MPI_WTICK docs at:
           (t
            (error "Unsupported MPI object type: ~S" object-type)))))
 
+(defun match-type-spec (type count)
+  (cond ((subtypep type 'string)
+         (make-obj-tspec :id +string+ :type 'string :count count
+                         :base-typespec (get-typespec-by-subtype 'character)))
+        ((subtypep type 'array)
+         (assert (consp type))
+         (let* ((elt-type (upgraded-array-element-type (second type)))
+                (base-typespec (get-array-elt-typespec elt-type)))
+           (make-obj-tspec :id +simple-array+ :type 'simple-array :count count
+                           :base-typespec base-typespec)))
+        (t
+         (assert (= count 1)) ; TODO: convert count>1 to array?
+         (let* ((base-typespec (get-scalar-typespec type)))
+           (make-obj-tspec :id +base-object+ :type type :count 1
+                           :base-typespec base-typespec)))))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;
 ;;; Array data access
 ;;;
 
+#+ecl
+(defun %get-array-data-ptr (array)
+  (check-type array array)
+  (ffi:c-inline (array) (:object) :object
+    "ecl_make_pointer((#0)->array.self.t)"
+    :one-liner t))
+
+#+(or ecl sbcl)
+(defmacro with-pointer-to-array-data ((pointer array elt-typespec) &body code)
+  "Binds a pointer to the array contents. The elt-typespec _must_ match the real element type."
+  (declare (ignorable elt-typespec))
+  #+sbcl
+  (let ((svec (gensym)) (sstart (gensym)) (send (gensym)))
+    `(sb-kernel:with-array-data ((,svec ,array) (,sstart 0) (,send))
+       (declare (ignore ,send))
+       (sb-sys:with-pinned-objects (,svec)
+         (let ((,pointer (sb-sys:sap+ (sb-sys:vector-sap ,svec)
+                                      (* ,sstart (typespec-size ,elt-typespec)))))
+           ,@code))))
+  #+ecl
+  `(let ((,pointer (%get-array-data-ptr ,array)))
+     ,@code))
+
+#+(or ecl sbcl)
+(cffi:defcfun "memcpy" :void
+  (dest :pointer)
+  (src :pointer)
+  (count :unsigned-int))
+
+(defun copy-cffi-to-array (array buffer typespec count &key force-safe)
+  "Copy data from a buffer ta an array. The typespec _must_ match the real element type."
+  (cond #+(or ecl sbcl)
+        ((not (or force-safe (typespec-unsafe-p typespec)))
+         (with-pointer-to-array-data (ptr array typespec)
+           (memcpy ptr buffer (* count (typespec-size typespec)))))
+        (t
+         (let ((cffi-type (typespec-cffi-type typespec)))
+           (loop for i from 0 below count
+              do (setf (row-major-aref array i) (cffi:mem-aref buffer cffi-type i)))))))
+
+(defun copy-cffi-from-array (array buffer typespec count &key force-safe)
+  "Copy data from an array to a buffer. The typespec _must_ match the real element type."
+  (cond #+(or ecl sbcl)
+        ((not (or force-safe (typespec-unsafe-p typespec)))
+         (with-pointer-to-array-data (ptr array typespec)
+           (memcpy buffer ptr (* count (typespec-size typespec)))))
+        (t
+         (let ((cffi-type (typespec-cffi-type typespec)))
+           (loop for i from 0 below count
+              do (setf (cffi:mem-aref buffer cffi-type i) (row-major-aref array i)))))))
+
+(defmacro with-array-data-copy ((buffer array elt-typespec count &key (in t) out (dealloc t) force-safe)
+                                &body code)
+  "Allocates a foreign buffer and moves data in and/or out of it."
+  (let* ((stypespec (gensym)) (sarray (gensym)) (scount (gensym)))
+    `(let ((,sarray ,array)
+           (,stypespec ,elt-typespec)
+           (,scount ,count))
+       (,@(if dealloc
+              `(cffi:with-foreign-object (,buffer (typespec-cffi-type ,stypespec) ,scount))
+              `(let ((,buffer (cffi:foreign-alloc :char :count (1+ count))))))
+          ,@(if in `((copy-cffi-from-array ,sarray ,buffer ,stypespec ,scount
+                                           ,@(if force-safe '(:force-safe t)))))
+          (multiple-value-prog1 (progn ,@code)
+            ,@(if out `((copy-cffi-to-array ,sarray ,buffer ,stypespec ,scount
+                                            ,@(if force-safe '(:force-safe t))))))))))
+
+(defmacro with-array-data-access ((buffer array elt-typespec count &key (in t) out handle-unsafe) &body code)
+  "Provides reference to the array data by either allocating a buffer, or direct access."
+  (declare (ignorable in out count handle-unsafe))
+  #+(or ecl sbcl)
+  (let ((body
+         `(with-pointer-to-array-data (,buffer ,array ,elt-typespec)
+            ,@code)))
+    (if handle-unsafe
+        `(if (typespec-unsafe-p ,elt-typespec)
+             (with-array-data-copy (,buffer ,array ,elt-typespec ,count :in ,in :out ,out)
+               ,@code)
+             ,body)
+        `(progn
+           (assert (not (typespec-unsafe-p ,elt-typespec)))
+           ,body)))
+  #-(or ecl sbcl)
+  `(with-array-data-copy (,buffer ,array ,elt-typespec ,count :in ,in :out ,out)
+     ,@code))
+
+(defmacro with-scalar-data-copy ((buffer name elt-typespec &key init-with) &body code)
+  "Allocates a scalar foreign object buffer with appropriate value init and/or retrieval."
+  (let* ((stypespec (gensym)) (ctype (gensym)))
+    `(let* ((,stypespec ,elt-typespec)
+            (,ctype (typespec-cffi-type ,stypespec)))
+       (cffi:with-foreign-object (,buffer ,ctype)
+         (symbol-macrolet ((,name (cffi:mem-ref ,buffer ,ctype)))
+           ,@(if init-with `((setf ,name ,init-with)))
+           ,@code)))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;
@@ -337,8 +456,7 @@ See MPI_BUFFER_ATTACH and MPI_BUFFER_DETACH docs at:
 ;;; Basic point-to-point operations
 ;;;
 
-(defun mpi-send-1 (buf count mpi-type destination
-                   &key (tag +default-tag+) (mode :basic) (comm :MPI_COMM_WORLD))
+(defun %mpi-send-1 (buf count mpi-type destination tag comm mode)
   "A low-level wrapper around the MPI_Send, MPI_Ssend, MPI_Rsend, and MPI_Bsend functions"
   (case mode
     (:basic       (mpi-send-ptr/basic buf count mpi-type destination tag comm))
@@ -346,61 +464,77 @@ See MPI_BUFFER_ATTACH and MPI_BUFFER_DETACH docs at:
     (:ready       (mpi-send-ptr/ready buf count mpi-type destination tag comm))
     (:buffered    (mpi-send-ptr/buffered buf count mpi-type destination tag comm))))
 
-(defun mpi-send(data destination &key (tag +default-tag+) (mode :basic)(comm :MPI_COMM_WORLD))
-  "Blocking send fuction. Sends data to definition.
-   Tries to be smart about automatically packaging the data depending on its type, and
-   Handle standard MPI types and CL objects
-  [See related docs on blocking send (MPI_SEND) http://www.mpi-forum.org/docs/mpi-11-html/node31.html,
-   communication modes at http://www.mpi-forum.org/docs/mpi-11-html/node40.html]
-  "
-  (let* ((metadata (match-type data :enable-default-conversion nil))
-	 (base-typespec (obj-tspec-base-typespec metadata))
+(defun %mpi-isend-1 (buf count mpi-type destination tag comm mode)
+  "A low-level wrapper around the MPI_ISend, MPI_ISsend, MPI_IRsend, and MPI_IBsend functions"
+  (case mode
+    (:basic       (mpi-isend-ptr/basic buf count mpi-type destination tag comm))
+    (:synchronous (mpi-isend-ptr/synchronous buf count mpi-type destination tag comm))
+    (:ready       (mpi-isend-ptr/ready buf count mpi-type destination tag comm))
+    (:buffered    (mpi-isend-ptr/buffered buf count mpi-type destination tag comm))))
+
+(defun %mpi-send-meta (data metadata destination tag comm mode)
+  (let* ((base-typespec (obj-tspec-base-typespec metadata))
 	 (meta-id (obj-tspec-id metadata))
-	 (cffi-type (typespec-cffi-type base-typespec))
 	 (mpi-type (typespec-mpi-type base-typespec))
 	 (count (obj-tspec-count metadata)))
-    (tracep *trace1* t "Send1: lisp-type=~a, count=~a, base-type=~a ~%" (obj-tspec-type metadata)  count base-typespec)
-    (when (= +string+ meta-id)
-      (cffi:with-foreign-string (cs data)
-	(mpi-send-1 cs count :MPI_CHAR  destination :tag tag :comm comm :mode mode)))
+    (tracep *trace1* t "Send1: ~A~%" metadata)
+    (cond ((= +string+ meta-id)
+           (cffi:with-foreign-string (cs data)
+             (%mpi-send-1 cs count :MPI_CHAR destination tag comm mode)))
+          ((= +simple-array+ meta-id)
+           (with-array-data-access (ptr data base-typespec count :handle-unsafe t)
+             (%mpi-send-1 ptr count mpi-type destination tag comm mode)))
+          ((= +base-object+ meta-id)
+           (with-scalar-data-copy (ptr value base-typespec :init-with data)
+             (%mpi-send-1 ptr 1 mpi-type destination tag comm mode)))
+          ((= +converted-object+ meta-id)
+           (cffi:with-foreign-string (cs (obj-tspec-converted-obj metadata))
+             (%mpi-send-1 cs count :MPI_CHAR destination tag comm mode)))
+          (t (assert nil)))))
 
-    (cffi:with-foreign-object (buf cffi-type count)
-      (cond ((= +simple-array+ meta-id)
-	     (loop for i from 0 below count
-                do (setf (cffi:mem-aref buf cffi-type i) (row-major-aref data i)))
-	     (mpi-send-1 buf count mpi-type destination :tag tag :comm comm :mode mode))
-	    ((= +base-object+ meta-id)
-	     (setf (cffi:mem-aref buf cffi-type) data)
-	     (mpi-send-1 buf 1 mpi-type destination :tag tag :comm comm :mode mode))))
-      ))
+(defun mpi-send (data destination &key (tag +default-tag+) (mode :basic) (comm :MPI_COMM_WORLD))
+  "Blocking send fuction. Sends data to definition.
+Tries to be smart about automatically packaging the data depending
+on its type, and handles standard MPI types and CL objects.
+See related docs on blocking send (MPI_SEND):
+  http://www.mpi-forum.org/docs/mpi-11-html/node31.html,
+And communication modes at:
+  http://www.mpi-forum.org/docs/mpi-11-html/node40.html"
+  (%mpi-send-meta data (match-type data :enable-default-conversion nil)
+                  destination tag comm mode))
 
-(defun mpi-receive (source type count &key (tag +default-tag+)(comm :MPI_COMM_WORLD))
-  "Smart receiver protocol -- assumes that receiver knows count of the data has an appropriate count buffer ready to receive
-   intended to matches call to mpi-send
-   Blocking receive function.
-   Returns (values data status)
-  [See MPI_RECV docs at  http://www.mpi-forum.org/docs/mpi-11-html/node34.html]
-  will allocate and return a new object.
-  "
-  (when (subtypep type 'string)
-    (return-from mpi-receive (mpi-receive-string source :tag tag :buf-size-bytes (* 2 count))))
-
-  (let* ((array-type? (array-type-spec-p type))
-         (base-type (if array-type? (second type) type))
-	 (base-typespec (get-typespec-by-subtype base-type))
+(defun %mpi-receive-meta (metadata source tag comm)
+  (let* ((base-typespec (obj-tspec-base-typespec metadata))
+	 (meta-id (obj-tspec-id metadata))
 	 (mpi-type (typespec-mpi-type base-typespec))
-	 (cffi-type (typespec-cffi-type base-typespec)))
-    (assert base-typespec)
-    (cffi:with-foreign-object (buf cffi-type count)
-      (let ((status (mpi-receive-ptr buf count mpi-type source tag comm)))
-        (tracep *trace1* t "received object ~a, status=~a~%" (cffi:mem-aref buf cffi-type) status)
-        (values (if array-type?
-                    (let ((a (make-array count :element-type base-type)))
-                      (loop for i from 0 below count
-                         do (setf (row-major-aref a i) (cffi:mem-aref buf cffi-type i)))
-                      a)
-                    (cffi:mem-aref buf cffi-type))
-                status)))))
+	 (count (obj-tspec-count metadata)))
+    (cond ((= +string+ meta-id)
+           (mpi-receive-string source :tag tag :buf-size-bytes (* 2 count)))
+          ((= +simple-array+ meta-id)
+           (let ((array (make-array count :element-type (typespec-lisp-type base-typespec))))
+             (with-array-data-access (ptr array base-typespec count :in nil :out t :handle-unsafe t)
+               (let ((status (mpi-receive-ptr ptr count mpi-type source tag comm)))
+                 (tracep *trace1* t "received array, status=~a~%" status)
+                 (values array status)))))
+          ((= +base-object+ meta-id)
+           (with-scalar-data-copy (ptr value base-typespec)
+             (let ((status (mpi-receive-ptr ptr 1 mpi-type source tag comm)))
+               (tracep *trace1* t "received scalar, status=~a~%" status)
+               (values value status))))
+          ((= +converted-object+ meta-id)
+           (read-from-string
+            (mpi-receive-string source :tag tag :comm comm :buf-size-bytes count)))
+          (t (assert nil)))))
+
+(defun mpi-receive (source type count &key (tag +default-tag+) (comm :MPI_COMM_WORLD))
+  "Smart receiver protocol -- assumes that receiver knows count of
+the data has an appropriate count buffer ready to receive. Intended
+to matches call to mpi-send. Blocking receive function. Allocates
+and returns a new object.
+  Returns (values data status)
+See MPI_RECV docs at:
+  http://www.mpi-forum.org/docs/mpi-11-html/node34.html"
+  (%mpi-receive-meta (match-type-spec type count) source tag comm))
 
 (defun mpi-receive1 (source type count &key (tag +default-tag+) (comm :MPI_COMM_WORLD))
   "Smart receiver protocol -- assumes that receiver knows type of data to receive
@@ -421,61 +555,55 @@ See MPI_BUFFER_ATTACH and MPI_BUFFER_DETACH docs at:
     (mpi-receive source type count :tag tag :comm comm)))
 
 
-(defun mpi-send-string (s destination &key (tag +default-tag+) (mode :basic)(blocking :t)(comm :MPI_COMM_WORLD))
-  "send string to destination
-   mode is one of:  :basic  :buffered :synchronous
-   blocking can be t or nil.
-   When blocking is t,  this call returns only after the
-   application buffer in the sending task is free for reuse. Note that
-   this routine may be implemented differently on different systems. The
-   MPI standard permits the use of a system buffer but does not require
-   it. Some implementations may actually use a synchronous send (MPI_Ssend)
-   to implement the basic blocking send.
-   If blocking is nil, then a non-blocking send operation is used.
-
-
-   if synchronous == t, then uses  MPI_Ssend, otherwise uses MPI_Send
-   Send vs Bsend vs Ssend:(let ((req (mpi-receive-string-noblock
-   In case of Send, nothing is guaranteed about the state of the receiver.
-      If ther receiver is not ready to read the data, then the data may be
-      stored in a system buffer.
-      However, it *might* be unsafe to assume anything about the size of the
-      the system buffer, which might overflow.
-    Ssend guarantees that we block until the recipient starts reading the data.
-    Bsend explicitly states that a buffer will be used. Furthermore, the buffer that is used is allocated by the user using attach_buffer. Thus, using Bsend makes it explicit that we are relying on a buffer, and furthermore, we have control over the size of the buffer. In basic Send, a buffer might be used (or not), and we don't have any guarantees about the size of the buffer.
-
-  [See related docs on blocking send (MPI_SEND) http://www.mpi-forum.org/docs/mpi-11-html/node31.html,
-   communication modes at http://www.mpi-forum.org/docs/mpi-11-html/node40.html]
-   "
-  (let ((count (length s)))
+(defun mpi-send-string (str destination &key (tag +default-tag+) (mode :basic)
+                        (blocking t) (comm :MPI_COMM_WORLD))
+  "Send string to destination.
+Mode is one of:  :basic  :buffered :synchronous
+When blocking is true, this call returns only after the
+application buffer in the sending task is free for reuse. Note that
+this routine may be implemented differently on different systems. The
+MPI standard permits the use of a system buffer but does not require
+it. Some implementations may actually use a synchronous send (MPI_Ssend)
+to implement the basic blocking send.
+If blocking is false, then a non-blocking send operation is used.
+In case of :basic mode, nothing is guaranteed about the state of the
+receiver. If the receiver is not ready to read the data, then the data
+may be stored in a system buffer. However, it *might* be unsafe to
+assume anything about the size of the the system buffer, which might
+overflow.
+:synchronous guarantees that we block until the recipient
+starts reading the data.
+:buffered explicitly states that a buffer will be used. Furthermore,
+the buffer that is used is allocated by the user using attach_buffer.
+See related docs on blocking send (MPI_SEND):
+  http://www.mpi-forum.org/docs/mpi-11-html/node31.html,
+Communication modes at:
+  http://www.mpi-forum.org/docs/mpi-11-html/node40.html"
+  (check-type str string)
+  (let ((count (length str)))
     (assert (< count *mpi-string-buf-size*))
     (cond (blocking
-	   (cffi:with-foreign-string (c-str s)
-	     (mpi-send-1 c-str count :MPI_CHAR  destination :tag tag :comm comm :mode mode)))
+	   (cffi:with-foreign-string (c-str str)
+	     (%mpi-send-1 c-str count :MPI_CHAR destination tag comm mode)))
 	  (t ;non-blocking
 	   ;; must return a request handle
 	   (let ((buf (cffi:foreign-alloc :char :count (1+ count))))
              ;; need to add 1 to count (and also null-terminates the string)
-             (cffi:lisp-string-to-foreign s buf (1+ count))
-             (aprog1 (case mode
-                       (:basic       (mpi-isend-ptr/basic buf count :MPI_CHAR destination tag comm))
-                       (:synchronous (mpi-isend-ptr/synchronous buf count :MPI_CHAR destination tag comm))
-                       (:buffered    (mpi-isend-ptr/buffered buf count :MPI_CHAR destination tag comm)))
-               (tracep *trace1* t "mpi-send-string generated request = ~a~%"
-                       (request-mpi-request it))))))))
+             (cffi:lisp-string-to-foreign str buf (1+ count))
+             (aprog1 (%mpi-isend-1 buf count :MPI_CHAR destination tag comm mode)
+               (tracep *trace1* t "mpi-send-string generated request = ~a~%" it)))))))
 
-(defun mpi-receive-string (source &key (tag +default-tag+) (buf-size-bytes *mpi-string-buf-size*))
+(defun mpi-receive-string (source &key (tag +default-tag+)
+                           (buf-size-bytes *mpi-string-buf-size*) (comm :MPI_COMM_WORLD))
   "Blocking receive string. Returns (values string count)"
-  ;; INEFFICIENT - shouldn't allocate buffer every time.
-  (declare (type (unsigned-byte 32) source tag))
   (cffi:with-foreign-pointer (buf buf-size-bytes)
-    (let* ((status (mpi-receive-ptr buf buf-size-bytes :MPI_BYTE source tag :MPI_COMM_WORLD))
+    (let* ((status (mpi-receive-ptr buf buf-size-bytes :MPI_BYTE source tag comm))
            (count (status-count status)))
       (values (cffi:foreign-string-to-lisp buf :count count) count))))
 
 (defun mpi-send-receive-string (send-str destination source
-				&key (send-tag +default-tag+)(recv-tag +default-tag+)
-				(comm :MPI_COMM_WORLD)(recv-buf-size-bytes *mpi-string-buf-size*))
+				&key (send-tag +default-tag+) (recv-tag +default-tag+)
+				(comm :MPI_COMM_WORLD) (recv-buf-size-bytes *mpi-string-buf-size*))
   "Blocking send-receive operation.
    Returns (values received-string size-of-received-message)"
   (cffi:with-foreign-string (c-send-str send-str)
@@ -487,85 +615,38 @@ See MPI_BUFFER_ATTACH and MPI_BUFFER_DETACH docs at:
              (count (status-count status)))
         (values (cffi:foreign-string-to-lisp recv-buf :count count) count)))))
 
-(defun mpi-send-auto (data destination &key (tag +default-tag+)
-		      (mode :basic)(comm :MPI_COMM_WORLD))
+(defun %send-metadata (metadata destination comm mode)
+  (cffi:with-foreign-object (array :int 3)
+    (setf (cffi:mem-aref array :int 0) (typespec-id (obj-tspec-base-typespec metadata)))
+    (setf (cffi:mem-aref array :int 1) (obj-tspec-count metadata))
+    (setf (cffi:mem-aref array :int 2) (obj-tspec-id metadata))
+    (%mpi-send-1 array 3 :MPI_INT destination +metadata-tag+ comm mode)))
+
+(defun mpi-send-auto (data destination &key (tag +default-tag+) (mode :basic) (comm :MPI_COMM_WORLD))
   "Sends data to destination. Data is any Lisp object.
-   INEFFICIENT: First sends metadata (type, count) which is necessary
-   to set up the second send, which is the actual data payload."
-  (declare (optimize (debug 3) (speed 0) (safety 3)))
+INEFFICIENT: First sends metadata (type, count) which is necessary
+to set up the second send, which is the actual data payload."
   (let ((metadata (match-type data)))
-    ;; first, send the type and size as a 2-element array of ints
-    (tracep *trace1* t "send-auto metadata = ~a~%" metadata)
-    (cffi:with-foreign-object (array :int 3)
-      (setf (cffi:mem-aref array :int 0) (typespec-id (obj-tspec-base-typespec metadata)))
-      (setf (cffi:mem-aref array :int 1) (obj-tspec-count metadata))
-      (setf (cffi:mem-aref array :int 2) (obj-tspec-id metadata))
-      (tracep *trace1* t "send-auto, metadata packed id=~a, count=~a, id=~a~%"
-              (cffi:mem-aref array :int 0) (cffi:mem-aref array :int 1) (cffi:mem-aref array :int 2))
-      (mpi-send-1 array 3 :MPI_INT destination :tag +metadata-tag+ :mode mode :comm comm))
+    (tracep *trace1* t "send-auto metadata = ~A~%" metadata)
+    (%send-metadata metadata destination comm mode)
+    (%mpi-send-meta data metadata destination tag comm mode)))
 
-    ;; send the actual payload
-    (cond ((obj-tspec-converted-obj metadata)
-	   (let ((converted-data (obj-tspec-converted-obj metadata)))
-	     (assert (stringp converted-data))
-	     (cffi:with-foreign-string (c-str converted-data)
-	       (mpi-send-1 c-str (length converted-data)  :MPI_CHAR  destination :tag tag :comm comm :mode mode))))
-	  ((stringp data)
-	   (cffi:with-foreign-string (c-str data)
-	     (mpi-send-1 c-str (length data)  :MPI_CHAR  destination :tag tag :comm comm :mode mode)))
-	  (t ; a non-converted, basic object (a base object or a simple-array of base objects)
-	   (let ((base-typespec (obj-tspec-base-typespec metadata)))
-	     (cffi:with-foreign-object (buf (typespec-cffi-type base-typespec) (obj-tspec-count metadata))
-	       (cond ((arrayp data)
-		      (loop for i from 0 below (obj-tspec-count metadata)
-                         do (setf (cffi:mem-aref buf (typespec-cffi-type base-typespec) i)
-                                  (row-major-aref data i))))
-		     (t ;a basic object
-		      (setf (cffi:mem-aref buf (typespec-cffi-type base-typespec)) data)))
-	       (mpi-send-1 buf (obj-tspec-count metadata) (typespec-mpi-type base-typespec) destination
-			 :tag tag :comm comm :mode mode)))))
-    ))
+(defun %receive-metadata (source comm)
+  (cffi:with-foreign-object (array :int 3)
+    (let ((status (mpi-receive-ptr array 3 :MPI_INT source +metadata-tag+ comm)))
+      (declare (ignore status))
+      (make-obj-tspec :id (cffi:mem-aref array :int 2)
+                      :count (cffi:mem-aref array :int 1)
+                      :base-typespec (get-typespec-by-index
+                                      (cffi:mem-aref array :int 0))))))
 
-(defun mpi-receive-auto (source &key (tag +default-tag+)(comm :MPI_COMM_WORLD))
+(defun mpi-receive-auto (source &key (tag +default-tag+) (comm :MPI_COMM_WORLD))
   "Receives data from the source.
-   INEFFICIENT: First receives metadata (type, count) which is necessary to set up the second
-   receive call, which is the actual data payload."
-  (declare (optimize (debug 3)(speed 0)(safety 3)))
-  (let ((count 0)
-	(base-type-id nil)
-	(meta-id nil))
-    ;; First, receive metadata
-    (cffi:with-foreign-object (array :int 3)
-      (let ((status (mpi-receive-ptr array 3 :MPI_INT source +metadata-tag+ comm)))
-        (declare (ignore status)) ;;XXX TEMP
-        (setf base-type-id (cffi:mem-aref array :int 0))
-        (setf count (cffi:mem-aref array :int 1))
-        (setf meta-id (cffi:mem-aref array :int 2))))
-    ;; units of 'count' is # of base-type objects
-    ;; Receive the payload
-    (tracep *trace1* t "Receive: base-type-id=~a, count=~a, meta-id=~a~%" base-type-id count meta-id)
-    (cond ((= +converted-object+ meta-id) ; object sent as READ'able string
-	   (read-from-string (mpi-receive-string source :tag tag :buf-size-bytes count)))
-	  ((= +string+ meta-id)
-	   (mpi-receive-string source :tag tag :buf-size-bytes count))
-	  (t ;either a basic object or a simple-array of basic objects
-	   (multiple-value-bind (base-lisp-type base-lisp-type-size mpi-type cffi-type)
-	       (explode-typespec (get-typespec-by-index base-type-id))
-	     (declare (ignore base-lisp-type-size))
-	     (tracep *trace1* t "Receive: base-lisp-type=~a, count=~a, mpi-type=~a, cffi-type=~a~%" base-lisp-type count mpi-type cffi-type)
-	     (assert base-lisp-type)
-	     (cffi:with-foreign-object (buf cffi-type count)
-               (let ((status (mpi-receive-ptr buf count mpi-type source tag comm)))
-                 (declare (ignore status))
-                 ;;(tracep *trace1* t "received object ~a, status=~a~%" (cffi:mem-aref buf cffi-type) status)
-                 (cond ((= +simple-array+ meta-id) ;(> count 1)
-                        (make-array count :element-type base-lisp-type :initial-contents
-                                    (loop for i from 0 below count collect (cffi:mem-aref buf cffi-type i))))
-                       (t               ;(= +base-object+ meta-id)
-                        (cffi:mem-aref buf cffi-type))))))))))
-
-
-
+INEFFICIENT: First receives metadata (type, count) which is necessary
+to set up the second receive call, which is the actual data payload."
+  (let ((metadata (%receive-metadata source comm)))
+    (tracep *trace1* t "receive-auto metadata = ~A~%" metadata)
+    (%mpi-receive-meta metadata source tag comm)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;

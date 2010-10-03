@@ -66,7 +66,8 @@ THE SOFTWARE.
   (size nil :read-only t)
   (mpi-type nil :read-only t)
   (cffi-type nil :read-only t)
-  (id nil :read-only t))
+  (id nil :read-only t)
+  (unsafe-p nil :read-only t))
 
 (defstruct obj-tspec
   "Metadata for an object to be transferred."
