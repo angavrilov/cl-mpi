@@ -478,8 +478,10 @@ See MPI_BUFFER_ATTACH and MPI_BUFFER_DETACH docs at:
 	 (mpi-type (typespec-mpi-type base-typespec))
 	 (count (obj-tspec-count metadata)))
     (tracep *trace1* t "Send1: ~A~%" metadata)
-    (cond ((= +string+ meta-id)
-           (cffi:with-foreign-string (cs data)
+    (cond ((or (= +string+ meta-id)
+               (= +converted-object+ meta-id))
+           (cffi:with-foreign-string
+               (cs (or (obj-tspec-converted-obj metadata) data))
              (%mpi-send-1 cs count :MPI_CHAR destination tag comm mode)))
           ((= +simple-array+ meta-id)
            (with-array-data-access (ptr data base-typespec count :handle-unsafe t)
@@ -487,9 +489,6 @@ See MPI_BUFFER_ATTACH and MPI_BUFFER_DETACH docs at:
           ((= +base-object+ meta-id)
            (with-scalar-data-copy (ptr value base-typespec :init-with data)
              (%mpi-send-1 ptr 1 mpi-type destination tag comm mode)))
-          ((= +converted-object+ meta-id)
-           (cffi:with-foreign-string (cs (obj-tspec-converted-obj metadata))
-             (%mpi-send-1 cs count :MPI_CHAR destination tag comm mode)))
           (t (assert nil)))))
 
 (defun mpi-send (data destination &key (tag +default-tag+) (mode :basic) (comm :MPI_COMM_WORLD))
@@ -614,12 +613,20 @@ Communication modes at:
              (count (status-count status)))
         (values (cffi:foreign-string-to-lisp recv-buf :count count) count)))))
 
-(defun %send-metadata (metadata destination comm mode)
-  (cffi:with-foreign-object (array :int 3)
-    (setf (cffi:mem-aref array :int 0) (typespec-id (obj-tspec-base-typespec metadata)))
-    (setf (cffi:mem-aref array :int 1) (obj-tspec-count metadata))
-    (setf (cffi:mem-aref array :int 2) (obj-tspec-id metadata))
-    (%mpi-send-1 array 3 :MPI_INT destination +metadata-tag+ comm mode)))
+(defmacro with-foreign-metadata ((ptr size-var metadata &key (in t) out) &body code)
+  `(cffi:with-foreign-object (,ptr :int 3)
+     ,@(if (and metadata in)
+           `((,@(if (eq in t) '(progn) `(when ,in))
+                (setf (cffi:mem-aref ,ptr :int 0) (typespec-id (obj-tspec-base-typespec ,metadata))
+                      (cffi:mem-aref ,ptr :int 1) (obj-tspec-count ,metadata)
+                      (cffi:mem-aref ,ptr :int 2) (obj-tspec-id ,metadata)))))
+     (let ((,size-var 3))
+       ,@code)
+     ,@(if out
+           `((make-obj-tspec :id (cffi:mem-aref ,ptr :int 2)
+                             :count (cffi:mem-aref ,ptr :int 1)
+                             :base-typespec (get-typespec-by-index
+                                             (cffi:mem-aref ,ptr :int 0)))))))
 
 (defun mpi-send-auto (data destination &key (tag +default-tag+) (mode :basic) (comm :MPI_COMM_WORLD))
   "Sends data to destination. Data is any Lisp object.
@@ -627,23 +634,16 @@ INEFFICIENT: First sends metadata (type, count) which is necessary
 to set up the second send, which is the actual data payload."
   (let ((metadata (match-type data)))
     (tracep *trace1* t "send-auto metadata = ~A~%" metadata)
-    (%send-metadata metadata destination comm mode)
+    (with-foreign-metadata (ptr size metadata)
+      (%mpi-send-1 ptr size :MPI_INT destination +metadata-tag+ comm mode))
     (%mpi-send-meta data metadata destination tag comm mode)))
-
-(defun %receive-metadata (source comm)
-  (cffi:with-foreign-object (array :int 3)
-    (let ((status (mpi-receive-ptr array 3 :MPI_INT source +metadata-tag+ comm)))
-      (declare (ignore status))
-      (make-obj-tspec :id (cffi:mem-aref array :int 2)
-                      :count (cffi:mem-aref array :int 1)
-                      :base-typespec (get-typespec-by-index
-                                      (cffi:mem-aref array :int 0))))))
 
 (defun mpi-receive-auto (source &key (tag +default-tag+) (comm :MPI_COMM_WORLD))
   "Receives data from the source.
 INEFFICIENT: First receives metadata (type, count) which is necessary
 to set up the second receive call, which is the actual data payload."
-  (let ((metadata (%receive-metadata source comm)))
+  (let ((metadata (with-foreign-metadata (ptr size nil :out t)
+                    (mpi-receive-ptr ptr size :MPI_INT source +metadata-tag+ comm))))
     (tracep *trace1* t "receive-auto metadata = ~A~%" metadata)
     (%mpi-receive-meta metadata source tag comm)))
 
@@ -745,122 +745,63 @@ Returns an alist of completed indexes & statuses."
 ;;; Collective Operations
 ;;;
 
-
-(defun mpi-broadcast (data &key (root 0)(comm :MPI_COMM_WORLD))
-  "Broadcasts data from the process with rank root to all processes of the group (MPI_COMM_WORLD),
-   itself included. It is called by all members of group using the same arguments for comm, root. On return, the contents of root's communication buffer has been copied to all processes.
-   [** This is a specialized version of the MPI standard function MPI_BCAST (see http://www.mpi-forum.org/docs/mpi-11-html/node67.html)]
-
-
-   Assume: if data is basic, then at the time of the call, it is set to the same type basic object at all procs.
-           if data is simple-array (or string), then the types AND ARRAY COUNTS are the same at all procs -> will write into the provided array, and return a reference to it!
-
-  "
-  (let* ((metadata (match-type data :enable-default-conversion nil))
-	 (base-typespec (obj-tspec-base-typespec metadata))
+(defun %mpi-broadcast-meta (data metadata root comm buf-size-bytes)
+  (let* ((base-typespec (obj-tspec-base-typespec metadata))
 	 (meta-id (obj-tspec-id metadata))
-	 (cffi-type (typespec-cffi-type base-typespec))
 	 (mpi-type (typespec-mpi-type base-typespec))
 	 (count (obj-tspec-count metadata)))
-    (assert (and metadata base-typespec meta-id))
-    (assert data) ; data needs to be the same type and count at all procs. Can't pass in nil!
-    (tracep *trace1* t "Bcast: lisp-type=~a, count=~a, base-type=~a ~%" (obj-tspec-type metadata)  count base-typespec)
-    (when (= +string+ meta-id)
-      (cffi:with-foreign-pointer (buf count)
-	(when (= root (mpi-comm-rank)) ; at the root, fill the buffer witht the string to be sent. At other nodes, don't bother filling the buffer
-	  (cffi:with-foreign-string (cs data)
-	    (loop for i from 0 below count do
-                 (setf (cffi:mem-aref buf :char i) (cffi:mem-aref cs :char i)))))
-        (mpi-broadcast-ptr buf count :MPI_CHAR root comm)
-	;;(loop for i from 0 below count do (setf (aref data i) (cffi:mem-aref buf :char i)))
-	;; XXX Inefficient, temporary hack -- I allocate a new lisp string with this foreign-string-to-lisp call
-	(setf data (cffi:foreign-string-to-lisp buf)) ;; how can I replace this with something that overwrites data?
-	(return-from mpi-broadcast data)))
+    (tracep *trace1* t "Broadcast: ~A~%" metadata)
+    (cond ((or (= +string+ meta-id)
+               (= +converted-object+ meta-id))
+           (cffi:with-foreign-pointer (buf buf-size-bytes)
+             (when (= root (mpi-comm-rank))
+               (assert (< count buf-size-bytes))
+               (cffi:with-foreign-string
+                   (cs (or (obj-tspec-converted-obj metadata) data))
+                 (memcpy buf cs count))
+               (setf (cffi:mem-ref buf :int8 count) 0))
+             (mpi-broadcast-ptr buf buf-size-bytes :MPI_CHAR root comm)
+             (let ((rv (cffi:foreign-string-to-lisp buf)))
+               (if (= +converted-object+ meta-id)
+                   (read-from-string rv)
+                   rv))))
+          ((= +simple-array+ meta-id)
+           (with-array-data-access (ptr data base-typespec count :out t :handle-unsafe t)
+             (mpi-broadcast-ptr ptr count mpi-type root comm)))
+          ((= +base-object+ meta-id)
+           (with-scalar-data-copy (ptr value base-typespec :init-with data)
+             (mpi-broadcast-ptr ptr 1 mpi-type root comm)
+             value))
+          (t (assert nil)))))
 
-    (cffi:with-foreign-object (buf (typespec-cffi-type base-typespec) (obj-tspec-count metadata))
-      (cond ((= +simple-array+ meta-id)
-	     (loop for i from 0 below count
-                do (setf (cffi:mem-aref buf cffi-type i) (row-major-aref data i)))
-	     (mpi-broadcast-ptr buf count mpi-type  root comm)
-	     (loop for i from 0 below count
-                do (setf (row-major-aref data i) (cffi:mem-aref buf cffi-type i)))
-	     (return-from mpi-broadcast data) ; overwrites and returns the input array
-	     )
-	    ((= +base-object+ meta-id)
-	     (setf (cffi:mem-aref buf cffi-type) data)
-	     (mpi-broadcast-ptr buf  count mpi-type  root comm)
-	     (return-from mpi-broadcast (cffi:mem-aref buf cffi-type))))
-      )))
+(defun mpi-broadcast (data &key (root 0) (comm :MPI_COMM_WORLD)
+                      (buf-size-bytes *mpi-string-buf-size*))
+  "Broadcasts data from the process with rank root to all processes
+of the group (MPI_COMM_WORLD), itself included. It is called by all
+members of group using the same arguments for comm, root. On return,
+the contents of root's communication buffer has been copied to all
+processes.
+  This is a specialized version of the MPI standard function
+MPI_BCAST: see http://www.mpi-forum.org/docs/mpi-11-html/node67.html.
+  Assume: if data is basic, then at the time of the call, it is set
+to the same type basic object at all procs.
+  If data is simple-array (or string), then the types AND ARRAY
+COUNTS are the same at all procs -> will write into the provided
+array, and return a reference to it!"
+  (let ((metadata (match-type data :enable-default-conversion nil)))
+    (%mpi-broadcast-meta data metadata root comm buf-size-bytes)))
 
-(defun mpi-broadcast-auto (data &key (root 0))
-  "Broadcasts data from root to all processors. All processors in the group should call MPI-BROADCAST-STRING
-
-   Returns the value of the Broadcasted data
-   *** Broadcast is NOT the same as as send! It can be useful to synchronize an environment
-   All processes must prepare a buffer to receive the broadcast
-   e.g., (let ((r (mpi-broadcast-string (write-to-string (mpi-comm-rank))) :root 0))))
-    would result in r on all nodes being assigned 0 (the rank of the root node, which is 0
-   INEFFICIENT - first broadcasts metadata, then the actual payload.
-   "
-  (declare (optimize (speed 0) (debug 3)))
+(defun mpi-broadcast-auto (data &key (root 0) (comm :MPI_COMM_WORLD))
+  "Broadcasts data from root to all processors. All processors in the group
+should call MPI-BROADCAST-AUTO. Returns the value of the broadcasted data.
+INEFFICIENT - first broadcasts metadata, then the actual payload."
   (tracep *trace1* t "mpi-broadcast ~a [root=~a]~%"  data root)
-  (let ((metadata nil) ; used only by root
-	(typespec-id nil)
-	(count 0)
-	(meta-id nil))
-    (when (= root (mpi-comm-rank));; compute metadata
-      (setf metadata (match-type data)))
-
-    ;; broadcast the type and count of data as a 3-element array
-    (cffi:with-foreign-object (metadata-array :int 3)
-      (when (= root (mpi-comm-rank))
-	(tracep *trace1* t "mpi-broadcast-auto: metadata=~a~%" metadata)
-	(setf (cffi:mem-aref metadata-array :int 0 ) (typespec-id (obj-tspec-base-typespec metadata)))
-	(setf (cffi:mem-aref metadata-array :int 1 ) (obj-tspec-count metadata))
-	(setf (cffi:mem-aref metadata-array :int 2 ) (obj-tspec-id metadata)))
-
-      (mpi-broadcast-ptr metadata-array 3 :MPI_INT root :MPI_COMM_WORLD)
-      (tracep *trace1* t "received broadcast datatype ~a, count=~a, meta-id=~a ~%" (cffi:mem-aref metadata-array :int 0)(cffi:mem-aref metadata-array :int 1)(cffi:mem-aref metadata-array :int 2))
-
-      (setf typespec-id (cffi:mem-aref metadata-array :int 0)
-	    count (cffi:mem-aref metadata-array :int 1)
-	    meta-id (cffi:mem-aref metadata-array :int 2)))
-
-    ;; broadcast the actual data payload
-    (cond ((or (= +converted-object+ meta-id)(= +string+ meta-id))
-	   (cffi:with-foreign-pointer (buf count)
-	     (when (= root (mpi-comm-rank)) ; at the root, fill the buffer witht the string to be sent. At other nodes, don't bother filling the buffer
-	       (cffi:with-foreign-string (cs (if (= +converted-object+ meta-id) (obj-tspec-converted-obj metadata) data))
-		 (loop for i from 0 below count do
-                      (setf (cffi:mem-aref buf :char i) (cffi:mem-aref cs :char i)))))
-	     (mpi-broadcast-ptr buf count :MPI_CHAR root :MPI_COMM_WORLD)
-	     (if (= +converted-object+ meta-id)
-		 (read-from-string (cffi:foreign-string-to-lisp buf :count count))
-		 (cffi:foreign-string-to-lisp buf :count count))))
-	  ((= +simple-array+ meta-id)
-	   (multiple-value-bind (base-type base-type-bytes mpi-type cffi-type)
-               (explode-typespec (get-typespec-by-index typespec-id))
-	     (declare (ignore base-type-bytes))
-	     (assert base-type)
-	     (cffi:with-foreign-object (buf cffi-type count)
-	       (when (= root (mpi-comm-rank))
-		 (loop for i from 0 below count do
-                      (setf (cffi:mem-aref buf cffi-type i) (row-major-aref data i))))
-	       (mpi-broadcast-ptr buf count mpi-type root :MPI_COMM_WORLD)
-	       (make-array count :element-type base-type :initial-contents
-			   (loop for i from 0 below count collect (cffi:mem-aref buf cffi-type i))))))
-	  ((= +base-object+ meta-id)
-	   (multiple-value-bind (base-type base-type-bytes mpi-type cffi-type)
-               (explode-typespec (get-typespec-by-index typespec-id))
-	     (assert base-type)
-	     (cffi:with-foreign-pointer (buf base-type-bytes)
-	       (when (= root (mpi-comm-rank))
-		 (setf (cffi:mem-aref buf cffi-type) data))
-	       (mpi-broadcast-ptr buf 1 mpi-type root :MPI_COMM_WORLD)
-	       (cffi:mem-aref buf cffi-type))))
-	  )))
-
-
+  (let* ((root?         (= root (mpi-comm-rank)))
+         (init-metadata (if root? (match-type data)))
+         (new-metadata (with-foreign-metadata (ptr size init-metadata :in root? :out t)
+                         (mpi-broadcast-ptr ptr size :MPI_INT root comm)))
+         (metadata (if root? init-metadata new-metadata)))
+    (%mpi-broadcast-meta data metadata root comm (1+ (obj-tspec-count metadata)))))
 
 (defun mpi-reduce (data op &key (root 0) (comm :MPI_COMM_WORLD)(allreduce nil))
   "Calls MPI_Reduce with operator op on obj, which is count instances of datatype.
