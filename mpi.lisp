@@ -170,28 +170,37 @@ See MPI_WTICK docs at:
 ;;;
 
 (defparameter *lisp-cffi-mpi-conversions*
-  '(((signed-byte 8) 1 :MPI_CHAR :int8 0)
-    ((unsigned-byte 8) 1 :MPI_UNSIGNED_CHAR :uint8 1)
-    ((signed-byte 16) 2 :MPI_SHORT :int16 2)
-    ((unsigned-byte 16) 2 :MPI_UNSIGNED_SHORT :uint16 3)
-    ((signed-byte 32) 4 :MPI_INT :int32 4)
-    ((unsigned-byte 32) 4 :MPI_UNSIGNED :uint32 5)
-    ((signed-byte 64) 8 :MPI_LONG_LONG :int64 6)
-    ((unsigned-byte 64) 8 :MPI_UNSIGNED_LONG_LONG :uint64 7)
-    (single-float 4 :MPI_FLOAT :float 8)
-    (double-float 8 :MPI_DOUBLE :double 9)
-    (character 1 :MPI_UNSIGNED_CHAR :unsigned-char 10)
-    #+(or x86-64 x86_64)
-    (fixnum 8 :MPI_LONG_LONG :int64 11)
-    #-(or x86-64 x86_64)
-    (fixnum 4 :MPI_INT :int32 12))
+  (loop for (lisp-type size mpi-type cffi-type id)
+     in '(((signed-byte 8) 1 :MPI_CHAR :int8)
+          ((unsigned-byte 8) 1 :MPI_UNSIGNED_CHAR :uint8)
+          ((signed-byte 16) 2 :MPI_SHORT :int16)
+          ((unsigned-byte 16) 2 :MPI_UNSIGNED_SHORT :uint16)
+          ((signed-byte 32) 4 :MPI_INT :int32)
+          ((unsigned-byte 32) 4 :MPI_UNSIGNED :uint32)
+          ((signed-byte 64) 8 :MPI_LONG_LONG :int64)
+          ((unsigned-byte 64) 8 :MPI_UNSIGNED_LONG_LONG :uint64)
+          (single-float 4 :MPI_FLOAT :float)
+          (double-float 8 :MPI_DOUBLE :double)
+          (character 1 :MPI_UNSIGNED_CHAR :unsigned-char)
+          #+(or x86-64 x86_64)
+          (fixnum 8 :MPI_LONG_LONG :int64 100)
+          #-(or x86-64 x86_64)
+          (fixnum 4 :MPI_INT :int32 101))
+     and def-id from 0
+     collect (make-typespec :lisp-type lisp-type
+                            :size size
+                            :mpi-type mpi-type
+                            :cffi-type cffi-type
+                            :id (or id def-id)))
   "basic mappings between lisp types, cffi tyes, and mpi types")
 
-(defun typespec-lisp-type (s) (first s))
-(defun typespec-size (s) (second s))
-(defun typespec-mpi-type (s) (third s))
-(defun typespec-cffi-type (s) (fourth s))
-(defun typespec-id (s) (fifth s))
+(defun explode-typespec (s)
+  (when s
+    (values (typespec-lisp-type s)
+            (typespec-size s)
+            (typespec-mpi-type s)
+            (typespec-cffi-type s)
+            (typespec-id s))))
 
 (defconstant +converted-object+ 1)
 (defconstant +simple-array+ 2)
@@ -203,14 +212,14 @@ See MPI_WTICK docs at:
 (defun get-typespec-by-type (lisp-type)
   (memoize (lisp-type :test #'equal)
     (find-if (lambda (type-spec)
-               (and (subtypep lisp-type (first type-spec))
-                    (subtypep (first type-spec) lisp-type)))
+               (and (subtypep lisp-type (typespec-lisp-type type-spec))
+                    (subtypep (typespec-lisp-type type-spec) lisp-type)))
              *lisp-cffi-mpi-conversions*)))
 
 (defun get-typespec-by-subtype (lisp-type)
   (memoize (lisp-type :test #'equal)
     (find-if (lambda (type-spec)
-               (subtypep lisp-type (first type-spec)))
+               (subtypep lisp-type (typespec-lisp-type type-spec)))
              *lisp-cffi-mpi-conversions*)))
 
 (defun get-typespec-by-index (lisp-type-index)
@@ -256,6 +265,12 @@ See MPI_WTICK docs at:
                              :converted-obj obj-string)))
           (t
            (error "Unsupported MPI object type: ~S" object-type)))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;
+;;; Array data access
+;;;
+
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;
@@ -535,7 +550,7 @@ See MPI_BUFFER_ATTACH and MPI_BUFFER_DETACH docs at:
 	   (mpi-receive-string source :tag tag :buf-size-bytes count))
 	  (t ;either a basic object or a simple-array of basic objects
 	   (multiple-value-bind (base-lisp-type base-lisp-type-size mpi-type cffi-type)
-	       (apply #'values (get-typespec-by-index base-type-id))
+	       (explode-typespec (get-typespec-by-index base-type-id))
 	     (declare (ignore base-lisp-type-size))
 	     (tracep *trace1* t "Receive: base-lisp-type=~a, count=~a, mpi-type=~a, cffi-type=~a~%" base-lisp-type count mpi-type cffi-type)
 	     (assert base-lisp-type)
@@ -729,7 +744,7 @@ Returns an alist of completed indexes & statuses."
 		 (cffi:foreign-string-to-lisp buf :count count))))
 	  ((= +simple-array+ meta-id)
 	   (multiple-value-bind (base-type base-type-bytes mpi-type cffi-type)
-               (apply #'values (get-typespec-by-index typespec-id))
+               (explode-typespec (get-typespec-by-index typespec-id))
 	     (declare (ignore base-type-bytes))
 	     (assert base-type)
 	     (cffi:with-foreign-object (buf cffi-type count)
@@ -741,7 +756,7 @@ Returns an alist of completed indexes & statuses."
 			   (loop for i from 0 below count collect (cffi:mem-aref buf cffi-type i))))))
 	  ((= +base-object+ meta-id)
 	   (multiple-value-bind (base-type base-type-bytes mpi-type cffi-type)
-               (apply #'values (get-typespec-by-index typespec-id))
+               (explode-typespec (get-typespec-by-index typespec-id))
 	     (assert base-type)
 	     (cffi:with-foreign-pointer (buf base-type-bytes)
 	       (when (= root (mpi-comm-rank))

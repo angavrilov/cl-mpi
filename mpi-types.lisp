@@ -49,6 +49,7 @@ THE SOFTWARE.
 ;;; Wrappers for low-level structures
 
 (defstruct status
+  "Represents the completion status of an MPI operation."
   ;; will usually be a (signed-byte 32), but nil means that the count
   ;; could not be computed with MPI_Get_count at the time this status
   ;; object was created
@@ -59,8 +60,16 @@ THE SOFTWARE.
   #| NOTE: The slots before this place are accessed by
   .        ECL wrappers using hard-coded positions. |#)
 
+(defstruct typespec
+  "Represents a lisp type known to the MPI library."
+  (lisp-type nil :read-only t)
+  (size nil :read-only t)
+  (mpi-type nil :read-only t)
+  (cffi-type nil :read-only t)
+  (id nil :read-only t))
+
 (defstruct obj-tspec
-  "metadata for an object"
+  "Metadata for an object to be transferred."
   ;; ID code
   (id (error "ID required"))
   ;; lisp type
@@ -73,7 +82,7 @@ THE SOFTWARE.
   (converted-obj nil))
 
 (defstruct request
-  "an object which is returned by a nonblocking receive."
+  "An object representing a nonblocking receive."
   ;; the MPI request handle (opaque)
   (mpi-request nil)
   ;; buffer which will be filled when the request is complete
