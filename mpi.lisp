@@ -481,8 +481,9 @@ See MPI_BUFFER_ATTACH and MPI_BUFFER_DETACH docs at:
     (cond ((or (= +string+ meta-id)
                (= +converted-object+ meta-id))
            (cffi:with-foreign-string
-               (cs (or (obj-tspec-converted-obj metadata) data))
-             (%mpi-send-1 cs count :MPI_CHAR destination tag comm mode)))
+               ((cs byte-size) (or (obj-tspec-converted-obj metadata) data)
+                :null-terminated-p nil)
+             (%mpi-send-1 cs byte-size :MPI_CHAR destination tag comm mode)))
           ((= +simple-array+ meta-id)
            (with-array-data-access (ptr data base-typespec count :handle-unsafe t)
              (%mpi-send-1 ptr count mpi-type destination tag comm mode)))
@@ -522,7 +523,7 @@ And communication modes at:
                (values value status))))
           ((= +converted-object+ meta-id)
            (read-from-string
-            (mpi-receive-string source :tag tag :comm comm :buf-size-bytes count)))
+            (mpi-receive-string source :tag tag :comm comm :buf-size-bytes (* 2 count))))
           (t (assert nil)))))
 
 (defun mpi-receive (source type count &key (tag +default-tag+) (comm :MPI_COMM_WORLD))
@@ -581,22 +582,22 @@ Communication modes at:
   (let ((count (length str)))
     (assert (< count *mpi-string-buf-size*))
     (cond (blocking
-	   (cffi:with-foreign-string (c-str str)
-	     (%mpi-send-1 c-str count :MPI_CHAR destination tag comm mode)))
+	   (cffi:with-foreign-string ((c-str byte-size) str :null-terminated-p nil)
+	     (%mpi-send-1 c-str byte-size :MPI_CHAR destination tag comm mode)))
 	  (t ;non-blocking
-           ;; need to add 1 to count (and also null-terminates the string)
-	   (let ((buf (cffi:foreign-alloc :char :count (1+ count))))
-             (cffi:lisp-string-to-foreign str buf (1+ count))
-             (aprog1 (%mpi-isend-1 buf count :MPI_CHAR destination tag comm mode)
-               (setf (request-status-cb it) #'%dealloc-request-buffer)
+	   (multiple-value-bind (buf byte-size)
+               (cffi:foreign-string-alloc str :null-terminated-p nil)
+             (aprog1 (%mpi-isend-1 buf byte-size :MPI_CHAR destination tag comm mode)
+               (setf (request-status-cb it) #'%dealloc-request-string)
                (tracep *trace1* t "mpi-send-string generated request = ~a~%" it)))))))
 
 (defun mpi-receive-string (source &key (tag +default-tag+)
                            (buf-size-bytes *mpi-string-buf-size*) (comm :MPI_COMM_WORLD))
   "Blocking receive string. Returns (values string count)"
   (cffi:with-foreign-pointer (buf buf-size-bytes)
-    (let* ((status (mpi-receive-ptr buf buf-size-bytes :MPI_BYTE source tag comm))
+    (let* ((status (mpi-receive-ptr buf buf-size-bytes :MPI_CHAR source tag comm))
            (count (status-count status)))
+      (assert count)
       (values (cffi:foreign-string-to-lisp buf :count count) count))))
 
 (defun mpi-send-receive-string (send-str destination source
@@ -604,13 +605,14 @@ Communication modes at:
 				(comm :MPI_COMM_WORLD) (recv-buf-size-bytes *mpi-string-buf-size*))
   "Blocking send-receive operation.
    Returns (values received-string size-of-received-message)"
-  (cffi:with-foreign-string (c-send-str send-str)
+  (cffi:with-foreign-string ((c-send-str send-bytes) send-str :null-terminated-p nil)
     (cffi:with-foreign-pointer (recv-buf recv-buf-size-bytes)
       (let* ((status (mpi-sendrecv-ptr
-                      c-send-str (length send-str) :MPI_CHAR destination send-tag
+                      c-send-str send-bytes :MPI_CHAR destination send-tag
                       recv-buf recv-buf-size-bytes :MPI_CHAR source recv-tag
                       comm))
              (count (status-count status)))
+        (assert count)
         (values (cffi:foreign-string-to-lisp recv-buf :count count) count)))))
 
 (defmacro with-foreign-metadata ((ptr size-var metadata &key (in t) out) &body code)
@@ -658,6 +660,15 @@ to set up the second receive call, which is the actual data payload."
   (assert (request-deallocated-p request))
   (when (request-buf request)
     (cffi:foreign-free (request-buf request))
+    (setf (request-buf request) nil))
+  (setf (request-status-cb request) nil))
+
+(defun %dealloc-request-string (request status)
+  "A request callback that simply deallocates its buffer as a foreign string."
+  (declare (ignore status))
+  (assert (request-deallocated-p request))
+  (when (request-buf request)
+    (cffi:foreign-string-free (request-buf request))
     (setf (request-buf request) nil))
   (setf (request-status-cb request) nil))
 
@@ -755,12 +766,12 @@ Returns an alist of completed indexes & statuses."
                (= +converted-object+ meta-id))
            (cffi:with-foreign-pointer (buf buf-size-bytes)
              (when (= root (mpi-comm-rank))
-               (assert (< count buf-size-bytes))
                (cffi:with-foreign-string
-                   (cs (or (obj-tspec-converted-obj metadata) data))
-                 (memcpy buf cs count))
-               (setf (cffi:mem-ref buf :int8 count) 0))
+                   ((cs cs-bytes) (or (obj-tspec-converted-obj metadata) data))
+                 (assert (<= cs-bytes buf-size-bytes))
+                 (memcpy buf cs cs-bytes)))
              (mpi-broadcast-ptr buf buf-size-bytes :MPI_CHAR root comm)
+             ;; The received size is computed from the null terminator
              (let ((rv (cffi:foreign-string-to-lisp buf)))
                (if (= +converted-object+ meta-id)
                    (read-from-string rv)
@@ -791,7 +802,7 @@ array, and return a reference to it!"
   (let ((metadata (match-type data :enable-default-conversion nil)))
     (%mpi-broadcast-meta data metadata root comm buf-size-bytes)))
 
-(defun mpi-broadcast-auto (data &key (root 0) (comm :MPI_COMM_WORLD))
+(defun mpi-broadcast-auto (data &key (root 0) (comm :MPI_COMM_WORLD) buf-size-bytes)
   "Broadcasts data from root to all processors. All processors in the group
 should call MPI-BROADCAST-AUTO. Returns the value of the broadcasted data.
 INEFFICIENT - first broadcasts metadata, then the actual payload."
@@ -801,7 +812,7 @@ INEFFICIENT - first broadcasts metadata, then the actual payload."
          (new-metadata (with-foreign-metadata (ptr size init-metadata :in root? :out t)
                          (mpi-broadcast-ptr ptr size :MPI_INT root comm)))
          (metadata (if root? init-metadata new-metadata)))
-    (%mpi-broadcast-meta data metadata root comm (1+ (obj-tspec-count metadata)))))
+    (%mpi-broadcast-meta data metadata root comm (or buf-size-bytes (* 2 (1+ (obj-tspec-count metadata)))))))
 
 (defun mpi-reduce (data op &key (root 0) (comm :MPI_COMM_WORLD) (allreduce nil) into-array)
   "Calls MPI_Reduce with operator op on obj, which is count instances of datatype.
