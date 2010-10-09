@@ -224,10 +224,11 @@ See MPI_WTICK docs at:
              *lisp-cffi-mpi-conversions*)))
 
 (defun get-typespec-by-subtype (lisp-type)
-  (memoize (lisp-type :test #'equal)
-    (find-if (lambda (type-spec)
-               (subtypep lisp-type (typespec-lisp-type type-spec)))
-             *lisp-cffi-mpi-conversions*)))
+  (find-if (lambda (type-spec)
+             (subtypep lisp-type (typespec-lisp-type type-spec)))
+           *lisp-cffi-mpi-conversions*))
+
+(defparameter *character-typespec* (get-typespec-by-type 'character))
 
 (defun get-typespec-by-index (lisp-type-index)
   (memoize (lisp-type-index)
@@ -257,33 +258,34 @@ See MPI_WTICK docs at:
 (defun match-type (object &key (enable-default-conversion t))
   "Converts an object to an obj-tspec structure.
    If enable-default-conversion is t, object is possibly converted (e.g., to a string)"
-  (let* ((object-type (type-of object))
-         (base-typespec (get-typespec-by-subtype object-type)))
-    (cond (base-typespec
-	   (make-obj-tspec :id +base-object+ :type object-type :count 1
-                           :base-typespec base-typespec))
-	  ((stringp object)
-	   (make-obj-tspec :id +string+ :type 'string :count (length object)
-                           :base-typespec (get-typespec-by-subtype 'character)))
-	  ((arrayp object)
-	   (let* ((base-type (array-element-type object))
-		  (base-typespec (get-array-elt-typespec base-type)))
-	     (make-obj-tspec :id +simple-array+ :type 'simple-array :count (array-total-size object)
-                             :base-typespec base-typespec)))
-	  ;; generic conversion to READable string for objects which
-          ;; are not basic or specialized arrays
-	  (enable-default-conversion
-	   (let ((obj-string (to-string object)))
-             (make-obj-tspec :id +converted-object+ :type 'string :count (length obj-string)
-                             :base-typespec (get-typespec-by-subtype 'character)
-                             :converted-obj obj-string)))
-          (t
-           (error "Unsupported MPI object type: ~S" object-type)))))
+  (cond ((stringp object)
+         (make-obj-tspec :id +string+ :type 'string :count (length object)
+                         :base-typespec *character-typespec*))
+        ((arrayp object)
+         (let* ((base-type (array-element-type object))
+                (base-typespec (get-array-elt-typespec base-type)))
+           (make-obj-tspec :id +simple-array+ :type 'simple-array :count (array-total-size object)
+                           :base-typespec base-typespec)))
+        (t
+         (let* ((object-type (type-of object))
+                (base-typespec (get-typespec-by-subtype object-type)))
+           (cond (base-typespec
+                  (make-obj-tspec :id +base-object+ :type object-type :count 1
+                                  :base-typespec base-typespec))
+                 ;; generic conversion to READable string for objects which
+                 ;; are not basic or specialized arrays
+                 (enable-default-conversion
+                  (let ((obj-string (to-string object)))
+                    (make-obj-tspec :id +converted-object+ :type 'string :count (length obj-string)
+                                    :base-typespec *character-typespec*
+                                    :converted-obj obj-string)))
+                 (t
+                  (error "Unsupported MPI object type: ~S" object-type)))))))
 
 (defun match-type-spec (type count)
   (cond ((subtypep type 'string)
          (make-obj-tspec :id +string+ :type 'string :count count
-                         :base-typespec (get-typespec-by-subtype 'character)))
+                         :base-typespec *character-typespec*))
         ((subtypep type 'array)
          (assert (consp type))
          (let* ((elt-type (upgraded-array-element-type (second type)))
