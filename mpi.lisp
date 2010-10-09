@@ -152,6 +152,9 @@ See MPI_WITME docs at:
   ;;Does not return error, so don't wrap!
   (MPI_Wtime))
 
+#+ecl
+(define-compiler-macro mpi-wtime () '(MPI_Wtime))
+
 (defun mpi-wtick ()
   "Returns the resolution of MPI-WTIME in seconds.
 That is, it returns, as a double precision value,
@@ -163,6 +166,9 @@ See MPI_WTICK docs at:
   http://www.mpi-forum.org/docs/mpi-11-html/node150.html"
   ;; does not return error, so don't wrap!
   (MPI_Wtick))
+
+#+ecl
+(define-compiler-macro mpi-wtick () '(MPI_Wtick))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;
@@ -318,7 +324,11 @@ See MPI_WTICK docs at:
   `(let ((,pointer (%get-array-data-ptr ,array)))
      ,@code))
 
-#+(or ecl sbcl)
+#+ecl
+(ffi:defcbody memcpy (:pointer-void :pointer-void :unsigned-int) :object
+              "(memcpy(#0,#1,#2),Cnil)")
+
+#-ecl
 (cffi:defcfun "memcpy" :void
   (dest :pointer)
   (src :pointer)

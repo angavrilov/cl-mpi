@@ -238,8 +238,15 @@ group members have entered the call.
 See MPI_BARRIER docs at:
   http://www.mpi-forum.org/docs/mpi-11-html/node66.html]")
 
+#-ecl-mpicc-compile
 (cffi:defcfun ("MPI_Wtime" MPI_Wtime) :double)
+#-ecl-mpicc-compile
 (cffi:defcfun ("MPI_Wtick" MPI_Wtick) :double)
+
+#+ecl-mpicc-compile
+(ffi:defcbody MPI_Wtime () :double "MPI_Wtime()")
+#+ecl-mpicc-compile
+(ffi:defcbody MPI_Wtick () :double "MPI_Wtick()")
 
 ;; Point-to-point communications
 ;; Blocking communications
