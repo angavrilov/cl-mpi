@@ -30,6 +30,7 @@
         (let ((truename (probe-file (merge-pathnames target prefix))))
           (when truename
             (return-from find-in-path truename)))))
+    #-(and ecl (or mpicc mpicc-static))
     (error "Could not find any of ~S in path ~S" pathnames path))
   ;; Find mpicc in path
   (defparameter *mpicc-name*
@@ -89,10 +90,10 @@
                   #P"shared/libmpi.so.0"))
 
 (defun load-mpi-foreign-libraries ()
-  #-(and ecl mpicc)
+  #-(and ecl (or mpicc mpicc-static))
   (cffi:load-foreign-library *mpi-shared-library*))
 
-(let ((path (string-downcase (namestring *mpi-shared-library*))))
+(let ((path (string-downcase (namestring (or *mpi-shared-library* "")))))
   (cond ((search "/openmpi" path)
          (pushnew :openmpi *features*))
         ((search "/mpich2" path)

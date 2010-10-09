@@ -74,7 +74,7 @@ Some of the documentation strings are copied or derived from:
                   (let ()
                     (defconstant ,name (ffi:c-inline () () :int ,cname :one-liner t))))
                 (eval-when (:execute)
-                  (defvar ,name #:INVALID-CONSTANT-VALUE)))))
+                  (defvar ,name '#:INVALID-CONSTANT-VALUE)))))
   #.(with-open-file (stream (merge-pathnames #P"mpi-grovel.lisp"
                                              (or *compile-file-truename*
                                                  *load-truename*)))

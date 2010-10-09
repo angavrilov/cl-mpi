@@ -60,6 +60,7 @@ Tested MPI implementations:
 Tested Lisp implementations.
    - Steel Bank Common Lisp (SBCL) 1.0.22,1.0.24,1.0.28
    - CMU Common Lisp 19e
+   - Embeddable Common Lisp 10.7.1
 
 Successfully tested configurations:
 1) MPICH 1.2.5.3-2 on Ubuntu Linux 8.04 (64-bit)with SBCL 1.0.28 (64-bit)
@@ -135,15 +136,38 @@ b) Configure the installation.
 ------------------------------------------
 c) Build CL-MPI
 
-Start Lisp in the directory where the CL-MPI sources reside, and build the CL-MPI system:
+Start Lisp in the directory where the CL-MPI sources
+reside, and build the CL-MPI system:
 
-CL-USER> (asdf:operate 'asdf:compile-op 'cl-mpi)
+CL-USER> (asdf:compile-system 'cl-mpi)
 
+Or (suggested if you are using SBCL or CMUCL), there
+is a Makefile which can be used in the cl-mpi direcory:
 
-Or (suggested if you are using SBCL or CMUCL), there is a Makefile which can be used in the cl-mpi direcory:
-      make test-sbcl      
+      make test-sbcl
  or   make test-cmucl
 
+With Embeddable Common Lisp this library supports an
+alternative way of accessing the MPI libraries, namely
+direct linking to them via mpicc. In order to enable
+this, you have to push the :mpicc feature before the
+asd file is loaded, normally from your .eclrc file:
+
+  (pushnew :mpicc *features*)
+
+You can also add it to the beginning of cl-mpi.asd.
+
+If your installation has only static versions of the MPI
+libraries, and cannot create MPI-enabled fasls, you can
+use the following commands to build an executable:
+
+  (pushnew :mpicc-static *features*)
+  (asdf:compile-system :cl-mpi)
+  (asdf:make-mpicc-build <your system> :type :program)
+
+Note that in this mode the system can still be loaded
+normally with load-op, but any call to an mpi operation
+will result in an error.
 
 ===================================================
 4. TESTING

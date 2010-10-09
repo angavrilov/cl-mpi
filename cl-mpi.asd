@@ -1,10 +1,10 @@
 (in-package :asdf)
 
 ;;; CFFI-Grovel is needed for processing grovel-file components
-#-(and ecl mpicc)
+#-(and ecl (or mpicc mpicc-static))
 (load-system :cffi-grovel)
 
-#+(and ecl mpicc)
+#+(and ecl (or mpicc mpicc-static))
 (load (merge-pathnames #P"mpicc-source-file.lisp" *load-truename*))
 
 (defsystem cl-mpi
@@ -12,9 +12,11 @@
     :author "Alex Fukunaga"
     :version "0.1.0"
     :license "MIT"
-    :depends-on (:cffi :cffi-grovel)
+    :depends-on (:cffi
+                 #-(and ecl (or mpicc mpicc-static))
+                 :cffi-grovel)
     :components
-    #-(and ecl mpicc)
+    #-(and ecl (or mpicc mpicc-static))
     ((:file "packages")
      (:file "cl-mpi-configure" :depends-on ("packages"))
      (:file "mpi-types" :depends-on ("packages"))
@@ -22,7 +24,7 @@
      (:file "mpi-cffi-api" :depends-on ("packages" "mpi-grovel" "mpi-types"))
      (:file "mpi-bindings" :depends-on ("packages" "mpi-cffi-api"))
      (:file "mpi" :depends-on ("packages" "mpi-bindings")))
-    #+(and ecl mpicc)
+    #+(and ecl (or mpicc mpicc-static))
     ((:file "packages")
      (:file "cl-mpi-configure" :depends-on ("packages"))
      (:file "mpi-types" :depends-on ("packages"))
