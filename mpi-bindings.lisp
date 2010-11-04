@@ -58,16 +58,24 @@ Some of the documentation strings are copied or derived from:
            (ctype (&rest x) (declare (ignore x)))
            (cstruct (&rest x) (declare (ignore x)))
            (constantenum (name &rest items)
-             `(eval-when (:compile-toplevel :execute)
-                (setf (get ',name 'input-ffi-type) :object
-                      (get ',name 'parsed-c-type) "int"
-                      (get ',name 'emit-parser)
-                      (lambda (rvar ivar)
-                        (with-output-to-string (stream)
-                          ,@(loop for ((name cname)) in items
-                               collect `(format stream "if (~A == @~S) ~A = ~A;~%  else "
-                                                ivar ',name rvar ,cname))
-                          (format stream "~A = ecl_to_int(~A);" rvar ivar))))))
+             `(progn
+                (eval-when (:load-toplevel)
+                  ,@(loop for ((nil . names)) in items nconc
+                         (loop for (name1 name2) on names
+                            while name2 collect
+                              `(ffi:clines
+                                ,(format nil "~&#ifndef ~A~%#define ~A ~A~%#endif~%"
+                                         name1 name1 name2)))))
+                (eval-when (:compile-toplevel :execute)
+                  (setf (get ',name 'input-ffi-type) :object
+                        (get ',name 'parsed-c-type) "int"
+                        (get ',name 'emit-parser)
+                        (lambda (rvar ivar)
+                          (with-output-to-string (stream)
+                            ,@(loop for ((name cname)) in items
+                                 collect `(format stream "if (~A == @~S) ~A = ~A;~%  else "
+                                                  ivar ',name rvar ,cname))
+                            (format stream "~A = ecl_to_int(~A);" rvar ivar)))))))
            (constant ((name cname))
              `(progn
                 (eval-when (:load-toplevel)
