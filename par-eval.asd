@@ -3,6 +3,6 @@
     :author "Alex Fukunaga"
     :version "0.1.0"
     :license "MIT"
-    :depends-on (:cl-mpi :cffi :cffi-grovel)
+    :depends-on (:cl-mpi)
     :components
     ((:file "par-eval")))

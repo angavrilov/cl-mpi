@@ -20,10 +20,17 @@ test-sbcl: cl-mpi-sbcl
 	mpirun -np $(NUMPROCS) $(SBCL) --load "run-mpi-test.lisp"
 
 cl-mpi-ecl:
-	$(ECL) -eval '(pushnew :mpicc *features*)' -load "make-mpi.lisp" -eval '(quit)'
+	$(ECL) -load "make-mpi.lisp"
 
 test-ecl: cl-mpi-ecl
-	mpirun -np $(NUMPROCS) $(ECL) -eval '(pushnew :mpicc *features*)' -load "run-mpi-test.lisp" -eval '(quit)'
+	mpirun -np $(NUMPROCS) $(ECL) -load "run-mpi-test.lisp"
+
+cl-mpi-test:
+	$(ECL) -load "build-mpi-test.lisp"
+	mv -f cl-mpi-test-mono.asd $@
+
+test-ecl-mpicc: cl-mpi-test
+	mpirun -np $(NUMPROCS) `pwd`/cl-mpi-test
 
 cl-mpi-cmucl:
 	$(CMUCL) -load "make-mpi.lisp"

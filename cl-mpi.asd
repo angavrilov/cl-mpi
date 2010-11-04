@@ -10,7 +10,7 @@
 (defsystem cl-mpi
     :description "Common Lisp bindings for the Message Passing Interface (MPI)"
     :author "Alex Fukunaga"
-    :version "0.1.0"
+    :version "0.2.3"
     :license "MIT"
     :depends-on (:cffi
                  #-(and ecl (or mpicc mpicc-static))

@@ -10,13 +10,12 @@
                  ;; compiler to use a no-op:
                  #+mpicc-static "echo")
         (*features* (list* :ecl-mpicc-compile *features*)))
-    (call-next-method)))
-
-#+mpicc-static
-(defmethod output-files ((operation compile-op) (c mpicc-source-file))
-  ;; The normal method returns (object-file fasl-file),
-  ;; but in static mode we cannot build the lib.
-  (list (first (call-next-method))))
+    (call-next-method)
+    ;; Simulate creating the fasl to avoid spurious recompilations:
+    #+mpicc-static
+    (with-open-file (stream (second (output-files op component))
+                            :if-exists :supersede :direction :output)
+      (princ "STUB" stream))))
 
 (defmethod perform :around ((op load-op) (component mpicc-source-file))
   (let ((*features* (list* :ecl-mpicc-compile *features*)))
